@@ -7,9 +7,7 @@
 staticfn int prayer_done(void);
 staticfn void maybe_turn_mon_iter(struct monst *);
 staticfn struct obj *worst_cursed_item(void);
-staticfn int in_trouble(void);
 staticfn void fix_curse_trouble(struct obj *, const char *);
-staticfn void fix_worst_trouble(int);
 staticfn void angrygods(aligntyp);
 staticfn void at_your_feet(const char *);
 staticfn void gcrownu(void);

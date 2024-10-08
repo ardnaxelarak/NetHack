@@ -2419,6 +2419,7 @@ extern const char *udeadinside(void);
 
 /* ### potion.c ### */
 
+extern long itimeout_incr(long, int);
 extern void set_itimeout(long *, long) NONNULLARG1;
 extern void incr_itimeout(long *, int) NONNULLARG1;
 extern void make_confused(long, boolean);
@@ -2453,6 +2454,8 @@ extern void speed_up(long);
 
 extern boolean critically_low_hp(boolean);
 extern boolean stuck_in_wall(void);
+extern int in_trouble(void);
+extern void fix_worst_trouble(int);
 extern void desecrate_altar(boolean, aligntyp);
 extern int dosacrifice(void);
 extern boolean can_pray(boolean);
@@ -3229,6 +3232,11 @@ extern const char * trapname(int, boolean);
 extern void ignite_items(struct obj *) NO_NNARGS;
 extern void trap_ice_effects(coordxy x, coordxy y, boolean ice_is_melting);
 extern void trap_sanity_check(void);
+
+/* ### twitch.c ### */
+
+extern void open_twitch(void);
+extern void check_twitch(void);
 
 /* ### u_init.c ### */
 

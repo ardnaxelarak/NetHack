@@ -6,7 +6,6 @@
 #include "hack.h"
 
 staticfn long itimeout(long);
-staticfn long itimeout_incr(long, int);
 staticfn void ghost_from_bottle(void);
 staticfn int drink_ok(struct obj *);
 staticfn void peffect_restore_ability(struct obj *);
