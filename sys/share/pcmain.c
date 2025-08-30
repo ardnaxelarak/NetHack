@@ -12,8 +12,6 @@
 #include <signal.h>
 #endif
 
-#include <ctype.h>
-
 #if !defined(AMIGA) && !defined(__DJGPP__)
 #include <sys\stat.h>
 #else
@@ -22,12 +20,6 @@
 
 #ifdef __DJGPP__
 #include <unistd.h> /* for getcwd() prototype */
-#endif
-
-#if defined(MICRO) || defined(OS2)
-ATTRNORETURN void nethack_exit(int) NORETURN;
-#else
-#define nethack_exit exit
 #endif
 
 char *exepath(char *);
@@ -437,8 +429,7 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
         raw_print("Cannot create lock file");
     } else {
         svh.hackpid = 1;
-        if (nhfp->structlevel)
-            write(nhfp->fd, (genericptr_t) &svh.hackpid, sizeof(svh.hackpid));
+        Sfo_int(nhfp, &svh.hackpid, "svh.hackpid");
         close_nhfile(nhfp);
     }
 

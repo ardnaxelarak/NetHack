@@ -1,4 +1,4 @@
-/* NetHack 3.7	dothrow.c	$NHDT-Date: 1709969638 2024/03/09 07:33:58 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.285 $ */
+/* NetHack 3.7	dothrow.c	$NHDT-Date: 1737343372 2025/01/19 19:22:52 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.300 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -16,6 +16,7 @@ staticfn int gem_accept(struct monst *, struct obj *);
 staticfn boolean toss_up(struct obj *, boolean) NONNULLARG1;
 staticfn void sho_obj_return_to_u(struct obj * obj);
 staticfn void throwit_return(boolean);
+staticfn void swallowit(struct obj *);
 staticfn struct obj *return_throw_to_inv(struct obj *, long, boolean,
                                        struct obj *);
 staticfn void tmiss(struct obj *, struct monst *, boolean);
@@ -67,6 +68,7 @@ multishot_class_bonus(
     case PM_NINJA:
         if (skill == -P_SHURIKEN || skill == -P_DART)
             multishot++;
+        FALLTHROUGH;
         /*FALLTHRU*/
     case PM_SAMURAI:
         /* role-specific launcher and its ammo */
@@ -175,6 +177,7 @@ throw_obj(struct obj *obj, int shotlimit)
         switch (P_SKILL(weapon_type(obj))) {
         case P_EXPERT:
             multishot++;
+            FALLTHROUGH;
         /*FALLTHRU*/
         case P_SKILLED:
             if (!weakmultishot)
@@ -250,6 +253,7 @@ throw_obj(struct obj *obj, int shotlimit)
     gm.m_shot.n = multishot;
     for (gm.m_shot.i = 1; gm.m_shot.i <= gm.m_shot.n; gm.m_shot.i++) {
         twoweap = u.twoweap;
+        assert(obj != NULL); /* m_shot.i <= m_shot.n guarantees this */
         /* split this object off from its slot if necessary */
         if (obj->quan > 1L) {
             otmp = splitobj(obj, 1L);
@@ -470,7 +474,8 @@ dofire(void)
        on its caller to make sure hero is strong enough to throw that */
     boolean uwep_Throw_and_Return = (uwep && AutoReturn(uwep, uwep->owornmask)
                                      && (uwep->oartifact != ART_MJOLLNIR
-                                         || ACURR(A_STR) >= STR19(25)));
+                                         || ACURR(A_STR) >= STR19(25))),
+            skip_fireassist = FALSE;
     int altres, res = ECMD_OK;
 
     /*
@@ -500,6 +505,7 @@ dofire(void)
        throwing Mjollnir if quiver contains daggers] */
     if (uwep_Throw_and_Return && (!obj || is_ammo(obj))) {
         obj = uwep;
+        skip_fireassist = TRUE;
 
     } else if (!obj) {
         if (!flags.autoquiver) {
@@ -548,9 +554,12 @@ dofire(void)
         obj = uquiver;
     }
 
-    if (uquiver && is_ammo(uquiver) && iflags.fireassist) {
+    if (uquiver && is_ammo(uquiver) && iflags.fireassist
+        && !skip_fireassist) {
         struct obj *olauncher;
 
+        if (uwep && is_pole(uwep) && could_pole_mon())
+            return use_pole(uwep, TRUE);
         /* Try to find a launcher */
         if (ammo_and_launcher(uquiver, uwep)) {
             obj = uquiver;
@@ -605,6 +614,7 @@ hitfloor(
     if (IS_ALTAR(levl[u.ux][u.uy].typ)) {
         doaltarobj(obj);
     } else if (verbosely) {
+        const char *verb = (obj->otyp == WAN_STRIKING) ? "strike" : "hit";
         const char *surf = surface(u.ux, u.uy);
         struct trap *t = t_at(u.ux, u.uy);
 
@@ -626,7 +636,7 @@ hitfloor(
                 break;
             }
         }
-        pline("%s %s the %s.", Doname2(obj), otense(obj, "hit"), surf);
+        pline("%s %s the %s.", Doname2(obj), otense(obj, verb), surf);
     }
 
     if (hero_breaks(obj, u.ux, u.uy, BRK_FROM_INV))
@@ -676,14 +686,15 @@ walk_path(
     if (dx < 0) {
         x_change = -1;
         dx = -dx;
-    } else
+    } else {
         x_change = 1;
+    }
     if (dy < 0) {
         y_change = -1;
         dy = -dy;
-    } else
+    } else {
         y_change = 1;
-
+    }
     i = err = 0;
     if (dx < dy) {
         while (i++ < dy) {
@@ -767,7 +778,8 @@ hurtle_step(genericptr_t arg, coordxy x, coordxy y)
     struct monst *mon;
     boolean may_pass = TRUE, via_jumping, stopping_short;
     struct trap *ttmp;
-    int dmg = 0;
+    struct rm *lev;
+    int ltyp, dmg = 0;
 
     if (!isok(x, y)) {
         You_feel("the spirits holding you back.");
@@ -779,68 +791,51 @@ hurtle_step(genericptr_t arg, coordxy x, coordxy y)
     }
     via_jumping = (EWwalking & I_SPECIAL) != 0L;
     stopping_short = (via_jumping && *range < 2);
+    lev = &levl[x][y];
+    ltyp = lev->typ;
 
     if (!Passes_walls || !(may_pass = may_passwall(x, y))) {
-        boolean odoor_diag = (IS_DOOR(levl[x][y].typ)
-                              && (levl[x][y].doormask & D_ISOPEN)
-                              && (u.ux - x) && (u.uy - y));
+        const char *why = NULL;
+        boolean diagonal = (u.ux - x) != 0 && (u.uy - y) != 0,
+                open_door = IS_DOOR(ltyp) && (lev->doormask & D_ISOPEN) != 0,
+                odoor_diag = open_door && diagonal;
 
-        if (IS_ROCK(levl[x][y].typ) || closed_door(x, y) || odoor_diag) {
-            const char *s;
-
+        if (IS_OBSTRUCTED(levl[x][y].typ)
+            || closed_door(x, y) || odoor_diag) {
+            why = IS_TREE(ltyp) ? "bumping into a tree"
+                  : IS_OBSTRUCTED(ltyp) ? "bumping into a wall"
+                    : odoor_diag ? "bumping into a door frame"
+                      : "bumping into a closed door";
             if (odoor_diag)
-                You("hit the door edge!");
+                You("hit the door frame!");
             pline("Ouch!");
-            if (IS_TREE(levl[x][y].typ))
-                s = "bumping into a tree";
-            else if (IS_ROCK(levl[x][y].typ))
-                s = "bumping into a wall";
-            else
-                s = "bumping into a door";
-            dmg = rnd(2 + *range);
-            losehp(Maybe_Half_Phys(dmg), s, KILLED_BY);
-            wake_nearto(x,y, 10);
-            return FALSE;
-        }
-        if (levl[x][y].typ == IRONBARS) {
+        } else if (ltyp == IRONBARS) {
+            why = "crashing into iron bars";
             You("crash into some iron bars.  Ouch!");
-            dmg = rnd(2 + *range);
-            losehp(Maybe_Half_Phys(dmg), "crashing into iron bars",
-                   KILLED_BY);
-            wake_nearto(x,y, 20);
-            return FALSE;
-        }
-        if ((obj = sobj_at(BOULDER, x, y)) != 0) {
+        } else if ((obj = sobj_at(BOULDER, x, y)) != 0) {
+            why = "bumping into a boulder";
             You("bump into a %s.  Ouch!", xname(obj));
-            dmg = rnd(2 + *range);
-            losehp(Maybe_Half_Phys(dmg), "bumping into a boulder", KILLED_BY);
-            wake_nearto(x,y, 10);
-            return FALSE;
-        }
-        if (!may_pass) {
+        }  else if (!may_pass) {
             /* did we hit a no-dig non-wall position? */
+            why = "touching the edge of the universe";
             You("smack into something!");
-            dmg = rnd(2 + *range);
-            losehp(Maybe_Half_Phys(dmg), "touching the edge of the universe",
-                   KILLED_BY);
-            wake_nearto(x,y, 10);
-            return FALSE;
-        }
-        if ((u.ux - x) && (u.uy - y) && bad_rock(gy.youmonst.data, u.ux, y)
-            && bad_rock(gy.youmonst.data, x, u.uy)) {
+        } else if (diagonal
+                   && bad_rock(gy.youmonst.data, u.ux, y)
+                   && bad_rock(gy.youmonst.data, x, u.uy)) {
             boolean too_much = (gi.invent
-                                && (inv_weight() + weight_cap() > 600));
+                       && (inv_weight() + weight_cap() > WT_TOOMUCH_DIAGONAL));
 
-            /* Move at a diagonal. */
             if (bigmonst(gy.youmonst.data) || too_much) {
+                why = "wedging into a narrow crevice";
                 You("%sget forcefully wedged into a crevice.",
                     too_much ? "and all your belongings " : "");
-                dmg = rnd(2 + *range);
-                losehp(Maybe_Half_Phys(dmg), "wedging into a narrow crevice",
-                       KILLED_BY);
-                wake_nearto(x,y, 10);
-                return FALSE;
             }
+        }
+        if (why) {
+            dmg = rnd(2 + *range);
+            losehp(Maybe_Half_Phys(dmg), why, KILLED_BY);
+            wake_nearto(x, y, 10);
+            return FALSE;
         }
     }
 
@@ -918,7 +913,7 @@ hurtle_step(genericptr_t arg, coordxy x, coordxy y)
     /* if terrain type changes, levitation or flying might become blocked
        or unblocked; might issue message, so do this after map+vision has
        been updated for new location instead of right after u_on_newpos() */
-    if (levl[u.ux][u.uy].typ != levl[ox][oy].typ)
+    if (ltyp != levl[ox][oy].typ)
         switch_terrain();
 
     /* might be entering a special room (treasure zoo, thrown room, &c) that
@@ -957,8 +952,7 @@ hurtle_step(genericptr_t arg, coordxy x, coordxy y)
             dotrap(ttmp, NO_TRAP_FLAGS); /* doesn't print messages */
         } else if (ttmp->ttyp == FIRE_TRAP) {
             dotrap(ttmp, NO_TRAP_FLAGS);
-        } else if ((is_pit(ttmp->ttyp) || is_hole(ttmp->ttyp))
-                   && Sokoban) {
+        } else if ((is_pit(ttmp->ttyp) || is_hole(ttmp->ttyp)) && Sokoban) {
             /* air currents overcome the recoil in Sokoban;
                when jumping, caller performs last step and enters trap */
             if (!via_jumping)
@@ -1311,6 +1305,7 @@ toss_up(struct obj *obj, boolean hitsroof)
                     Your("%s fails to protect you.", helm_simple_name(uarmh));
                 goto petrify;
             }
+            FALLTHROUGH;
             /*FALLTHRU*/
         case CREAM_PIE:
         case BLINDING_VENOM:
@@ -1352,7 +1347,7 @@ toss_up(struct obj *obj, boolean hitsroof)
                                    &dmg, rn1(18, 2));
 
         if (!dmg) { /* probably wasn't a weapon; base damage on weight */
-            dmg = ((int) obj->owt + 99) / 100;
+            dmg = ((int) obj->owt + (WT_TO_DMG - 1)) / WT_TO_DMG;
             dmg = (dmg <= 1) ? 1 : rnd(dmg);
             if (dmg > 6)
                 dmg = 6;
@@ -1462,9 +1457,20 @@ throwit_return(boolean clear_thrownobj)
         gt.thrownobj = (struct obj *) 0;
 }
 
+staticfn void
+swallowit(struct obj *obj)
+{
+    if (obj != uball) {
+        (void) mpickobj(u.ustuck, obj); /* clears 'gt.thrownobj' */
+        throwit_return(FALSE);
+    } else
+        throwit_return(TRUE);
+}
+
 /* throw an object, NB: obj may be consumed in the process */
 void
-throwit(struct obj *obj,
+throwit(
+    struct obj *obj,
     long wep_mask,       /* used to re-equip returning boomerang */
     boolean twoweap,     /* used to restore twoweapon mode if
                           * wielded weapon returns */
@@ -1472,10 +1478,11 @@ throwit(struct obj *obj,
 {
     struct monst *mon;
     int range, urange;
+    const struct throw_and_return_weapon *arw = autoreturn_weapon(obj);
     boolean crossbowing,
             impaired = (Confusion || Stunned || Blind
                         || Hallucination || Fumbling),
-            tethered_weapon = (obj->otyp == AKLYS && (wep_mask & W_WEP) != 0);
+            tethered_weapon = (arw && arw->tethered && (wep_mask & W_WEP) != 0);
 
     gn.notonhead = FALSE; /* reset potentially stale value */
     if ((obj->cursed || obj->greased) && (u.dx || u.dy) && !rn2(7)) {
@@ -1612,9 +1619,9 @@ throwit(struct obj *obj,
         else if (is_art(obj, ART_MJOLLNIR))
             range = (range + 1) / 2; /* it's heavy */
         else if (tethered_weapon) /* primary weapon is aklys */
-            /* if an aklys is going to return, range is limited by the
+            /* range of a tethered_weapon is limited by the
                length of the attached cord [implicit aspect of item] */
-            range = min(range, BOLT_LIM / 2);
+            range = min(range, isqrt(arw->range));
         else if (obj == uball && u.utrap && u.utraptype == TT_INFLOOR)
             range = 1;
 
@@ -1670,12 +1677,7 @@ throwit(struct obj *obj,
         if (tethered_weapon)
             tmp_at(DISP_END, 0);
     } else if (u.uswallow && !iflags.returning_missile) {
- swallowit:
-        if (obj != uball) {
-            (void) mpickobj(u.ustuck, obj); /* clears 'gt.thrownobj' */
-            throwit_return(FALSE);
-        } else
-            throwit_return(TRUE);
+        swallowit(obj);
         return;
     } else {
         /* Mjollnir must be wielded to be thrown--caller verifies this;
@@ -1721,8 +1723,10 @@ throwit(struct obj *obj,
                                KILLED_BY);
                     }
 
-                    if (u.uswallow)
-                        goto swallowit;
+                    if (u.uswallow) {
+                        swallowit(obj);
+                        return;
+                    }
                     if (!ship_object(obj, u.ux, u.uy, FALSE))
                         dropy(obj);
                 }
@@ -1740,8 +1744,10 @@ throwit(struct obj *obj,
                    capability back anyway, quivered or not shouldn't matter */
                 pline("%s to return!", Tobjnam(obj, "fail"));
 
-                if (u.uswallow)
-                    goto swallowit;
+                if (u.uswallow) {
+                    swallowit(obj);
+                    return;
+                }
                 /* continue below with placing 'obj' at target location */
             }
         }
@@ -1766,7 +1772,8 @@ throwit(struct obj *obj,
                 || (is_lava(gb.bhitpos.x, gb.bhitpos.y)
                     && !is_flammable(obj))) {
                 Soundeffect(se_splash, 50);
-                pline((weight(obj) > 9) ? "Splash!" : "Plop!");
+                pline((weight(obj) > WT_SPLASH_THRESHOLD)
+                      ? "Splash!" : "Plop!");
             }
         }
         if (flooreffects(obj, gb.bhitpos.x, gb.bhitpos.y, "fall")) {
@@ -2084,7 +2091,7 @@ thitmonst(
                 /* ...or any special item, if you've made him angry */
                 || !mon->mpeaceful) {
                 /* give an explanation for keeping the item only if leader is
-                   not doing it out of anger */ 
+                   not doing it out of anger */
                 if (mon->mpeaceful && !Deaf) {
                     /* just in case, identify the object so its name will
                        appear in the message */
@@ -2100,7 +2107,7 @@ thitmonst(
                 (void) mpickobj(mon, obj);
             } else {
                 /* under normal circumstances, leader will say something and
-                   then return the item to the hero */ 
+                   then return the item to the hero */
                 boolean next2u = monnear(mon, u.ux, u.uy);
 
                 finish_quest(obj); /* acknowledge quest completion */
@@ -2109,6 +2116,7 @@ thitmonst(
                 if (!next2u)
                     sho_obj_return_to_u(obj);
                 obj = addinv(obj); /* back into your inventory */
+                nhUse(obj);
                 (void) encumber_msg();
             }
             return 1; /* caller doesn't need to place it */
@@ -2588,12 +2596,14 @@ breakmsg(struct obj *obj, boolean in_view)
     default: /* glass or crystal wand */
         if (obj->oclass != WAND_CLASS)
             impossible("breaking odd object (%d)?", obj->otyp);
+        FALLTHROUGH;
         /*FALLTHRU*/
     case LENSES:
     case MIRROR:
     case CRYSTAL_BALL:
     case EXPENSIVE_CAMERA:
         to_pieces = " into a thousand pieces";
+        FALLTHROUGH;
     /*FALLTHRU*/
     case POT_WATER: /* really, all potions */
         if (!in_view)

@@ -1,4 +1,4 @@
-/* NetHack 3.7	tradstdc.h	$NHDT-Date: 1685522034 2023/05/31 08:33:54 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.54 $ */
+/* NetHack 3.7	tradstdc.h	$NHDT-Date: 1744938651 2025/04/17 17:10:51 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.67 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2006. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -178,14 +178,10 @@ typedef const char *vA;
 typedef genericptr genericptr_t; /* (void *) or (char *) */
 #endif
 
-#if defined(MICRO) || defined(WIN32)
+#ifndef NO_PTR_FMT
 /* We actually want to know which systems have an ANSI run-time library
  * to know which support the %p format for printing pointers.
- * Due to the presence of things like gcc, NHSTDC is not a good test.
- * So we assume microcomputers have all converted to ANSI and bigger
- * computers which may have older libraries give reasonable results with
- * casting pointers to unsigned long int (fmt_ptr() in alloc.c).
- */
+ * Since we require C99 or later, assume the library supports it. */
 #define HAS_PTR_FMT
 #endif
 
@@ -317,6 +313,96 @@ typedef genericptr genericptr_t; /* (void *) or (char *) */
 #undef signed
 #endif
 
+/*
+ * Language
+ * Standard
+ *
+ *          NetHack 3.7 range
+ *         /
+ *        /
+ *   C2y X      NetHack 3.6 and earlier range
+ *   C23 X     /
+ *   C17 X    X
+ *   C11 X    X
+ *   C99 X    X
+ *   C89      X
+ *
+ *
+ * The NetHack 3.7 source code currently makes use of the following
+ * C99 (and above) language features:
+ *
+ *     commas at the end of enumerator lists
+ *     variable declarations in for loop initializers
+ *     mixing declarations and code
+ *     variadic macros
+ *     'long long'
+ *
+ * The NetHack 3.7 source code adheres to the following greater-than C99
+ * language restrictions:
+ *
+ *     Removal of K&R function definitions
+ *     Removal of implicit int
+ */
+
+/*
+ * Provide a shorthand way of checking for a certain C standard
+ * in the NetHack header files by always setting NH_C to one
+ * of three possible values (as of January 2025):
+ *
+ * NH_C >= 202300L     Being compiled under C23 or greater
+ * NH_C >= 199900L     Being compiled under C99 or greater
+ * NH_C >= 198900L     Being compiled under C89 or greater,
+ *                     or C std could not be determined.
+ */
+#if defined(__STDC_VERSION__)
+#if (__STDC_VERSION__ >= 202000L)
+#define NH_C 202300L
+#else
+#define NH_C 199900L
+#endif  /* C23 or C99 */
+#else   /* __STDC_VERSION not defined */
+#define NH_C 198900L
+#endif  /* __STDC_VERSION not defined */
+#ifndef NH_C
+#define NH_C 198900L
+#endif
+
+/* NH_C is now defined to 198900L or 199900L or 202300L */
+
+#if NH_C >= 202300L
+/* Give first priority to standard */
+#ifndef __has_c_attribute
+#define __has_c_attribute(x) 0
+#endif
+/*
+ * noreturn
+ */
+#ifndef ATTRNORETURN
+#define ATTRNORETURN [[noreturn]]
+/* #warning [[noreturn]] from C23 */
+#endif  /* ATTRNORETURN not defined */
+/*
+ * fallthrough
+ */
+#if __has_c_attribute(fallthrough)
+/* Standard attribute is available, use it. */
+#define FALLTHROUGH [[fallthrough]]
+/* #warning [[fallthrough]] from C23 */
+#endif  /* __has_c_attribute(fallthrough) */
+/*
+ * maybe_unused
+ */
+#if __has_c_attribute(maybe_unused)
+#ifndef ATTRUNUSED
+#define ATTRUNUSED [[maybe_unused]]
+#endif
+#endif  /* __has_c_attribute(maybe_unused) */
+#endif  /* NH_C >= 202300L */
+
+/*
+ * Compiler-specific
+ */
+
 #ifdef __clang__
 /* clang's gcc emulation is sufficient for nethack's usage */
 #ifndef __GNUC__
@@ -325,19 +411,10 @@ typedef genericptr genericptr_t; /* (void *) or (char *) */
 #endif
 
 /*
- * Give first priority to standard
- */
-#ifndef ATTRNORETURN
-#if defined(__STDC_VERSION__) || defined(__cplusplus)
-#if (__STDC_VERSION__ > 202300L) || defined(__cplusplus)
-#define ATTRNORETURN [[noreturn]]
-#endif
-#endif
-#endif
-
-/*
- * Allow gcc2 to check parameters of printf-like calls with -Wformat;
- * append this to a prototype declaration (see pline() in extern.h).
+ * gcc (and also clang which masquerades as__GNUC__==5 due to #define above)
+ *
+ * Allow gcc2 and above to check parameters of printf-like calls with
+ * -Wformat; append this to a prototype declaration (see pline() in extern.h).
  */
 #ifdef __GNUC__
 #if (__GNUC__ >= 2) && !defined(USE_OLDARGS)
@@ -347,32 +424,52 @@ typedef genericptr genericptr_t; /* (void *) or (char *) */
 #define PRINTF_F_PTR(f, v) PRINTF_F(f, v)
 #endif
 #if __GNUC__ >= 3
+#ifndef ATTRUNUSED
 #define UNUSED __attribute__((unused))
+#endif
 #ifndef ATTRNORETURN
 #ifndef NORETURN
 #define NORETURN __attribute__((noreturn))
-#endif
-#endif
-#if (!defined(__linux__) && !defined(MACOS)) || defined(GCC_URWARN)
-/* disable gcc's __attribute__((__warn_unused_result__)) since explicitly
-   discarding the result by casting to (void) is not accepted as a 'use' */
-#define __warn_unused_result__ /*empty*/
-#define warn_unused_result /*empty*/
-#endif
-#endif
+/* #warning NORETURN __attribute__((noreturn)) from __GNUC__ >= 3 */
+#endif  /* NORETURN */
+#endif  /* ATTRNORETURN */
+#endif  /* __GNUC__ >= 3 */
 #if __GNUC__ >= 5
 #ifndef NONNULLS_DEFINED
 #define DO_DEFINE_NONNULLS
 #endif  /* !NONNULLS_DEFINED */
 /* #pragma message is available */
 #define NH_PRAGMA_MESSAGE 1
-#endif
-#endif
+#endif  /* __GNUC__ greater than or equal to 5 */
+#if (!defined(__linux__) && !defined(MACOS)) || defined(GCC_URWARN)
+/* disable gcc's __attribute__((__warn_unused_result__)) since explicitly
+   discarding the result by casting to (void) is not accepted as a 'use' */
+#define __warn_unused_result__ /*empty*/
+#define warn_unused_result /*empty*/
+#endif  /* GCC_URWARN || !__linux || !MACOS */
+#endif  /* __GNUC__ || clang masquerading as __GNUC__==5 */
 
-#if defined(__clang__) && !defined(DO_DEFINE_NONNULLS)
+/*
+ * clang-specific
+ *
+ */
+#if defined(__clang__)
+#ifndef FALLTHROUGH
+#if defined(__clang_major__)
+#if __clang_major__ >= 9
+#define FALLTHROUGH __attribute__((fallthrough))
+/* #warning FALLTHROUGH __attribute__((fallthrough)) from clang */
+#endif  /* __clang_major__ greater than or equal to 9 */
+#endif  /* __clang_major__ is defined */
+#endif  /* FALLTHROUGH */
+#if !defined(DO_DEFINE_NONNULLS)
 #define DO_DEFINE_NONNULLS
 #endif
+#endif  /* __clang__ */
 
+/*
+ * NONNULL args
+ */
 #if defined(DO_DEFINE_NONNULLS) && !defined(NONNULLS_DEFINED)
 #define NONNULL __attribute__((returns_nonnull))
 #define NONNULLPTRS __attribute__((nonnull))
@@ -395,16 +492,25 @@ typedef genericptr genericptr_t; /* (void *) or (char *) */
 #define NONNULLARG45 __attribute__((nonnull (4, 5))) /* do_screen_descri... */
 #define NONNULLS_DEFINED
 #undef DO_DEFINE_NONNULLS
-#endif  /* __clang__ && !NONNULLS_DEFINED */
+#endif  /* DO_DEFINE_NONNULLS && !NONNULLS_DEFINED */
 
+/*
+ * Microsoft compiler
+ */
 #ifdef _MSC_VER
 #ifndef ATTRNORETURN
 #define ATTRNORETURN __declspec(noreturn)
+/* #warning ATTRNORETURN __declspec(noreturn) from _MSC_VER */
 #endif
 /* #pragma message is available */
 #define NH_PRAGMA_MESSAGE 1
+#endif  /* _MSC_VER */
+
+#if !defined(UNUSED) && defined(ATTRUNUSED)
+#define UNUSED ATTRUNUSED
 #endif
 
+/* Fallback implementations */
 #ifndef PRINTF_F
 #define PRINTF_F(f, v)
 #endif
@@ -413,6 +519,12 @@ typedef genericptr genericptr_t; /* (void *) or (char *) */
 #endif
 #ifndef UNUSED
 #define UNUSED
+#endif
+#ifndef ATTRUNUSED
+#define ATTRUNUSED
+#endif
+#ifndef FALLTHROUGH
+#define FALLTHROUGH
 #endif
 #ifndef ATTRNORETURN
 #define ATTRNORETURN

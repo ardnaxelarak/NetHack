@@ -1,19 +1,19 @@
-/* NetHack 3.7	options.c	$NHDT-Date: 1710792444 2024/03/18 20:07:24 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.723 $ */
+/* NetHack 3.7	options.c	$NHDT-Date: 1737556914 2025/01/22 06:41:54 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.753 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2008. */
 /* NetHack may be freely redistributed.  See license for details. */
 
-#ifdef OPTION_LISTS_ONLY /* (AMIGA) external program for opt lists */
+#ifndef OPTION_LISTS_ONLY
+#include "hack.h"
+#include "tcap.h"
+#else /* OPTION_LISTS_ONLY: (AMIGA) external program for opt lists */
 #include "config.h"
 #include "objclass.h"
 #include "flag.h"
 NEARDATA struct flag flags; /* provide linkage */
 NEARDATA struct instance_flags iflags; /* provide linkage */
+NEARDATA struct accessibility_data a11y;
 #define static
-#else
-#include "hack.h"
-#include "tcap.h"
-#include <ctype.h>
 #endif
 
 #define BACKWARD_COMPAT
@@ -111,7 +111,7 @@ static struct allopt_t allopt[SIZE(allopt_init)];
 
 /* use rest of file */
 
-extern char configfile[]; /* for messages; files.c */
+/* extern char configfile[]; */ /* for messages; files.c */
 extern const struct symparse loadsyms[];
 #if defined(TOS)
 extern boolean colors_changed;  /* in tos.c */
@@ -257,6 +257,46 @@ static NEARDATA const char *perminv_modes[][3] = {
   /*8*/ { "in-use",    "inuse-only", "subset: items currently in use" },
 };
 
+struct objsymopt {
+    int num;
+    const char *nam;
+    const char *descr;
+};
+
+/*
+ * menuobjsyms:
+ *   Inventory display for the various values of menuobjsyms.
+ *   4' and 5' represent !sortpack which lacks headers; they
+ *   produce the same result.
+ *
+ *   0:                         1:
+ *        Weapons                    Weapons  (')')
+ *        a - 15 darts               a - 15 darts
+ *        Armor                      Armor    ('[')
+ *        b - Hawaiian shirt         b - Hawaiian shirt
+ *   2:                         3:
+ *        Weapons                    Weapons  (')')
+ *        a ) 15 darts               a ) 15 darts
+ *        Armor                      Armor    ('[')
+ *        b [ Hawaiian shirt         b [ Hawaiian shirt
+ *   4:                         5:
+ *        Weapons                    Weapons  (')')
+ *        a - 15 darts               a - 15 darts
+ *        Armor                      Armor    ('[')
+ *        b - Hawaiian shirt         b - Hawaiian shirt
+ *   4':                        5':
+ *        a ) 15 darts               a ) 15 darts
+ *        b [ Hawaiian shirt         b [ Hawaiian shirt
+ */
+static const struct objsymopt objsymvals[] = {
+    { 0, "none",         "don't show object symbols in menus" },
+    { 1, "headers",      "show object symbols in menu header lines" },
+    { 2, "entries",      "show object symbols in individual menu entries" },
+    { 3, "both",         "show object symbols in headers and menu entries" },
+    { 4, "conditional",  "show objsyms in entries if no headers are shown" },
+    { 5, "one-or-other", "show objsyms in header, in entries if no header" },
+};
+
 /*
  * Default menu manipulation command accelerators.  These may _not_ be:
  *
@@ -323,6 +363,7 @@ staticfn void rejectoption(const char *);
 staticfn char *string_for_opt(char *, boolean);
 staticfn char *string_for_env_opt(const char *, char *, boolean);
 staticfn void bad_negation(const char *, boolean);
+staticfn void set_menuobjsyms_flags(int);
 staticfn int change_inv_order(char *);
 staticfn boolean warning_opts(char *, const char *);
 staticfn int feature_alert_opts(char *, const char *);
@@ -368,6 +409,7 @@ staticfn int handler_align_misc(int);
 staticfn int handler_autounlock(int);
 staticfn int handler_disclose(void);
 staticfn int handler_menu_headings(void);
+staticfn int handler_menu_objsyms(void);
 staticfn int handler_menustyle(void);
 staticfn int handler_msg_window(void);
 staticfn int handler_number_pad(void);
@@ -415,8 +457,8 @@ ask_do_tutorial(void)
         boolean norc;
         int n, pass = 0;
 
-        rc = nh_basename(configfile, TRUE);
-        norc = !strcmp(configfile, "/dev/null");
+        rc = nh_basename(get_configfile(), TRUE);
+        norc = !strcmp(get_configfile(), "/dev/null");
         Snprintf(buf, sizeof buf,
                  "Put \"OPTIONS=!tutorial\" in %s to skip this query.",
                  (rc && *rc && !norc) ? rc : "your configuration file");
@@ -772,7 +814,7 @@ freeroleoptvals(void)
 void
 saveoptvals(NHFILE *nhfp)
 {
-    if (perform_bwrite(nhfp)) {
+    if (update_file(nhfp)) {
         char *val;
         unsigned len;
         int i, j;
@@ -781,11 +823,9 @@ saveoptvals(NHFILE *nhfp)
             for (j = 0; j < num_opt_phases; ++j) {
                 val = roleoptvals[i][j];
                 len = val ? Strlen(val) + 1 : 0;
-                if (nhfp->structlevel) {
-                    bwrite(nhfp->fd, (genericptr_t) &len, sizeof len);
-                    if (val)
-                        bwrite(nhfp->fd, (genericptr_t) val, len);
-                }
+                Sfo_unsigned(nhfp, &len, "optvals-len");
+                if (val)
+                    Sfo_char(nhfp, val, "optvals-val", len);
             }
     }
     if (release_data(nhfp))
@@ -804,10 +844,10 @@ restoptvals(NHFILE *nhfp)
         for (i = 0; i < 4; ++i)
             for (j = 0; j < num_opt_phases; ++j) {
                 /* len includes terminating '\0' for non-Null values */
-                mread(nhfp->fd, (genericptr_t) &len, sizeof len);
+                Sfi_unsigned(nhfp, &len, "optvals-len");
                 if (len) {
                     val = roleoptvals[i][j] = (char *) alloc(len);
-                    mread(nhfp->fd, (genericptr_t) val, len);
+                    Sfi_char(nhfp, val, "opvals-val", (int) len);
                 } else {
                     roleoptvals[i][j] = NULL;
                 }
@@ -1238,11 +1278,11 @@ optfn_crash_email(
         return optn_ok;
     }
     if (req == do_set) {
-        if ((op = string_for_opt(opts, FALSE))
-            != empty_optstr) {
-            gc.crash_email = dupstr(op);
-        } else
+        if ((op = string_for_opt(opts, FALSE)) == empty_optstr)
             return optn_err;
+        if (gc.crash_email)
+            free((genericptr_t) gc.crash_email);
+        gc.crash_email = dupstr(op);
         return optn_ok;
     }
     if (req == get_val || req == get_cnf_val) {
@@ -1264,11 +1304,11 @@ optfn_crash_name(
         return optn_ok;
     }
     if (req == do_set) {
-        if ((op = string_for_opt(opts, FALSE))
-            != empty_optstr) {
-            gc.crash_name = dupstr(op);
-        } else
+        if ((op = string_for_opt(opts, FALSE)) == empty_optstr)
             return optn_err;
+        if (gc.crash_name)
+            free((genericptr_t) gc.crash_name);
+        gc.crash_name = dupstr(op);
         return optn_ok;
     }
     if (req == get_val || req == get_cnf_val) {
@@ -1311,6 +1351,7 @@ optfn_crash_urlmax(
     }
     return optn_ok;
 }
+
 #endif /* CRASHREPORT */
 
 #ifdef CURSES_GRAPHICS
@@ -2182,6 +2223,71 @@ optfn_menu_headings(
     }
     if (req == do_handler) {
         return handler_menu_headings();
+    }
+    return optn_ok;
+}
+
+staticfn int
+optfn_menu_objsyms(
+    int optidx, int req,
+    boolean negated,
+    char *opts, char *op)
+{
+    if (req == do_init) {
+        /* set iflags.menu_objsyms to 4, "conditional"; also sets
+           iflags.menu_head_objsym to False and
+           iflags.use_menu_glyphs True */
+        set_menuobjsyms_flags(4);
+        return optn_ok;
+    }
+    if (req == do_set) {
+        unsigned k, l;
+        int i, osyms;
+
+        if (negated) {
+            /* allow '!menu_objsyms' (and '!use_menu_glyphs') as
+               'menu_objsyms:none' (0) */
+            osyms = 0;
+        } else if (op == empty_optstr) {
+            /* treat boolean 'menu_objsyms' as 'menu_objsyms:headers' (1)
+               accept obsolete boolean 'use_menu_glyphs' as a synonym
+               for 'menu_objsyms:entries' (2) */
+            osyms = !strncmp(opts, "use_menu_glyphs", 15) ? 2 : 1;
+        } else if (digit(*op)) {
+            i = atoi(op);
+            if (i >= SIZE(objsymvals)) {
+                config_error_add("Illegal %s parameter '%s'",
+                                 allopt[optidx].name, op);
+                return optn_err;
+            }
+            osyms = i;
+        } else {
+            /* stilted "one-or-other" is used to compress the menu width */
+            static const char alt5[] = "one-or-the-other";
+            unsigned l5 = (unsigned) (sizeof alt5 - sizeof "");
+
+            osyms = 0;
+            k = (unsigned) strlen(op);
+            for (i = 0; i < SIZE(objsymvals); ++i) {
+                l = (unsigned) strlen(objsymvals[i].nam);
+                if (k >= 4)
+                    l = k;
+                if (!strncmpi(objsymvals[i].nam, op, l)
+                    || (i == 5 && !strncmpi(alt5, op, l5))) {
+                    osyms = i;
+                    break;
+                }
+            }
+        }
+        set_menuobjsyms_flags(osyms);
+        return optn_ok;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        Sprintf(opts, "%s", objsymvals[iflags.menuobjsyms].nam);
+        return optn_ok;
+    }
+    if (req == do_handler) {
+        return handler_menu_objsyms();
     }
     return optn_ok;
 }
@@ -3451,6 +3557,9 @@ optfn_roguesymset(
     }
     if (req == do_set) {
         if (op != empty_optstr) {
+            if (gs.symset[ROGUESET].name)
+                free((genericptr_t) gs.symset[ROGUESET].name),
+                    gs.symset[ROGUESET].name = 0;
             gs.symset[ROGUESET].name = dupstr(op);
             if (!read_sym_file(ROGUESET)) {
                 clear_symsetentry(ROGUESET, TRUE);
@@ -3621,6 +3730,7 @@ optfn_scores(
                                      allopt[optidx].name);
                     return optn_silenterr;
                 }
+                FALLTHROUGH;
                 /*FALLTHRU*/
             default:
                 config_error_add("Unknown %s parameter '%s'",
@@ -3737,8 +3847,11 @@ optfn_soundlib(
          */
         if ((op = string_for_env_opt(allopt[optidx].name, opts, FALSE))
             != empty_optstr) {
+            enum soundlib_ids option_id;
 
             get_soundlib_name(soundlibbuf, WINTYPELEN);
+            option_id = soundlib_id_from_opt(op);
+            gc.chosen_soundlib = option_id;
             assign_soundlib(gc.chosen_soundlib);
         } else
             return optn_err;
@@ -4066,6 +4179,9 @@ optfn_symset(
     }
     if (req == do_set) {
         if (op != empty_optstr) {
+            if (gs.symset[PRIMARYSET].name)
+                free((genericptr_t) gs.symset[PRIMARYSET].name),
+                     gs.symset[PRIMARYSET].name = 0;
             gs.symset[PRIMARYSET].name = dupstr(op);
             if (!read_sym_file(PRIMARYSET)) {
                 clear_symsetentry(PRIMARYSET, TRUE);
@@ -5291,6 +5407,9 @@ optfn_boolean(
         case opt_rest_on_space:
             update_rest_on_space();
             break;
+        case opt_accessiblemsg:
+            a11y.msg_loc.x = a11y.msg_loc.y = 0;
+            break;
         default:
             break;
         }
@@ -5371,7 +5490,11 @@ can_set_perm_invent(void)
         iflags.perminv_mode = InvOptOn;
 
 #ifdef TTY_PERM_INVENT
-    if (WINDOWPORT(tty) && !go.opt_initial) {
+    if ((WINDOWPORT(tty)
+#ifdef WIN32
+         || WINDOWPORT(safestartup)
+#endif
+         ) && !go.opt_initial) {
         perm_invent_toggled(FALSE);
         /* perm_invent_toggled()
            -> sync_perminvent()
@@ -5387,6 +5510,20 @@ can_set_perm_invent(void)
 #endif
     return TRUE;
 }
+
+
+#ifdef TTY_PERM_INVENT
+void
+check_perm_invent_again(void)
+{
+    if (iflags.perm_invent_pending) {
+        iflags.perm_invent = FALSE;
+        if (can_set_perm_invent())
+           iflags.perm_invent = TRUE;
+        iflags.perm_invent_pending = FALSE;
+    }
+}
+#endif
 
 staticfn int
 handler_menustyle(void)
@@ -5636,6 +5773,43 @@ handler_menu_headings(void)
             update_inventory();
     }
     adjust_menu_promptstyle(WIN_INVEN, &iflags.menu_headings);
+    return optn_ok;
+}
+
+staticfn int
+handler_menu_objsyms(void)
+{
+    winid tmpwin;
+    anything any;
+    char buf[BUFSZ];
+    menu_item *picklist = (menu_item *) 0;
+    const char sep = iflags.menu_tab_sep ? '\t' : ' ';
+    int i, j, n, clr = NO_COLOR;
+
+    tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+    any = cg.zeroany;
+    for (i = 0; i < SIZE(objsymvals); ++i) {
+        Snprintf(buf, sizeof buf, "%-12.12s%c%.60s",
+                 objsymvals[i].nam, sep, objsymvals[i].descr);
+        any.a_int = i + 1;
+        j = objsymvals[i].num;
+        add_menu(tmpwin, &nul_glyphinfo, &any, '0' + i, *buf,
+                 ATR_NONE, clr, buf,
+                 (j == iflags.menuobjsyms) ? MENU_ITEMFLAGS_SELECTED
+                                           : MENU_ITEMFLAGS_NONE);
+    }
+    end_menu(tmpwin, "Set object symbols in menus to what?");
+    n = select_menu(tmpwin, PICK_ONE, &picklist);
+    if (n > 0) {
+        i = picklist[0].item.a_int - 1;
+        /* if there are two picks, use the one that wasn't pre-selected */
+        if (n > 1 && i == iflags.menuobjsyms)
+            i = picklist[1].item.a_int - 1;
+        set_menuobjsyms_flags(i);
+        free((genericptr_t) picklist);
+    }
+    destroy_nhwindow(tmpwin);
     return optn_ok;
 }
 
@@ -6623,10 +6797,10 @@ staticfn void
 rejectoption(const char *optname)
 {
 #ifdef MICRO
-    pline("\"%s\" settable only from %s.", optname, configfile);
+    pline("\"%s\" settable only from %s.", optname, get_configfile());
 #else
     pline("%s can be set only from NETHACKOPTIONS or %s.", optname,
-          configfile);
+          get_configfile());
 #endif
 }
 
@@ -6932,6 +7106,11 @@ initoptions(void)
      */
 #endif
 #endif /* SYSCF */
+
+    /* Carry out options that got deferred from early_options */
+    if (gd.deferred_showpaths)
+        do_deferred_showpaths(0);  /* does not return */
+
     initoptions_finish();
 }
 
@@ -6945,7 +7124,9 @@ initoptions_init(void)
     int i;
     boolean have_branch = (nomakedefs.git_branch && *nomakedefs.git_branch);
 
-    go.opt_phase = builtin_opt;		// Did I need to move this here?
+    go.opt_phase = builtin_opt;    /* Did I need to move this here? */
+    /* initialize the function pointers for saving the game */
+    sf_init();
     memcpy(allopt, allopt_init, sizeof(allopt));
     determine_ambiguities();
 
@@ -6996,6 +7177,7 @@ initoptions_init(void)
     flags.pile_limit = PILE_LIMIT_DFLT;  /* 5 */
     flags.runmode = RUN_LEAP;
     iflags.msg_history = 20;
+
     /* msg_window has conflicting defaults for multi-interface binary */
 #ifdef TTY_GRAPHICS
     iflags.prevmsg_window = 's';
@@ -7272,6 +7454,16 @@ initoptions_finish(void)
  *
  *******************************************
  */
+
+/* iflags.menuobjsyms also controls iflags.menu_head_objsym, and
+   iflags.use_menu_glyphs; they affect execution but are no longer options */
+staticfn void
+set_menuobjsyms_flags(int newobjsyms)
+{
+    iflags.menuobjsyms = newobjsyms;
+    iflags.menu_head_objsym = ((newobjsyms & 1) != 0) ? TRUE : FALSE;
+    iflags.use_menu_glyphs = ((newobjsyms & (2 | 4)) != 0) ? TRUE : FALSE;
+}
 
 /*
  * Change the inventory order, using the given string as the new order.
@@ -7585,6 +7777,7 @@ msgtype_free(void)
         tmp2 = tmp->next;
         free((genericptr_t) tmp->pattern);
         regex_free(tmp->regex);
+        tmp->regex = 0;
         free((genericptr_t) tmp);
     }
     gp.plinemsg_types = (struct plinemsg_type *) 0;
@@ -7732,7 +7925,7 @@ parse_role_opt(
     char **opp)
 {
     static char neg_opt[] = "!"; /* not 'const' but never modified */
-    char *preval, *op = *opp;
+    char *preval, *op;
     int which = (optidx == opt_role) ? RS_ROLE
                 : (optidx == opt_race) ? RS_RACE
                   : (optidx == opt_gender) ? RS_GENDER
@@ -7819,7 +8012,7 @@ parse_role_opt(
                    if it's ok, replace it with canonical form */
                 saveoptstr(optidx, op);
                 *opp = op;
-                ok = TRUE;
+                /*ok = TRUE; // redundant*/
                 /* don't return yet; value might be a list that follows
                    this with something else which might make it invalid */
             }
@@ -8160,6 +8353,28 @@ optfn_o_bind_keys(
     }
     if (req == do_handler) {
         handler_rebind_keys();
+    }
+    return optn_ok;
+}
+
+staticfn int
+optfn_o_autocomplete(
+    int optidx UNUSED, int req, boolean negated UNUSED,
+    char *opts, char *op UNUSED)
+{
+    if (req == do_init) {
+        return optn_ok;
+    }
+    if (req == do_set) {
+    }
+    if (req == get_val || req == get_cnf_val) {
+        if (!opts)
+            return optn_err;
+        Sprintf(opts, n_currently_set, count_autocompletions());
+        return optn_ok;
+    }
+    if (req == do_handler) {
+        handler_change_autocompletions();
     }
     return optn_ok;
 }
@@ -9037,7 +9252,6 @@ handle_add_list_remove(const char *optname, int numtotal)
     };
     int clr = NO_COLOR;
 
-    opt_idx = 0;
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
     any = cg.zeroany;
@@ -9261,7 +9475,7 @@ option_help(void)
 
     datawin = create_nhwindow(NHW_TEXT);
     Snprintf(buf, sizeof buf,
-             "Set options as OPTIONS=<options> in %s", configfile);
+             "Set options as OPTIONS=<options> in %s", get_configfile());
     opt_intro[CONFIG_SLOT] = (const char *) buf;
     for (i = 0; opt_intro[i]; i++)
         putstr(datawin, 0, opt_intro[i]);
@@ -9557,7 +9771,7 @@ next_opt(winid datawin, const char *str)
     if (!*str) {
         s = eos(buf);
         if (s > &buf[1] && s[-2] == ',')
-            Strcpy(s - 2, "."); /* replace last ", " */
+            s[-2] = '.', s[-1] = '\0'; /* replace ending ", " with "." */
         i = COLNO;              /* (greater than COLNO - 2) */
     } else {
         i = Strlen(buf) + Strlen(str) + 2;
@@ -9799,6 +10013,16 @@ wc_set_font_name(int opttype, char *fontname)
     return;
 }
 
+static char **fgp[] = { &iflags.wcolors[wcolor_menu].fg,
+                        &iflags.wcolors[wcolor_message].fg,
+                        &iflags.wcolors[wcolor_status].fg,
+                        &iflags.wcolors[wcolor_text].fg };
+static char **bgp[] = { &iflags.wcolors[wcolor_menu].bg,
+                        &iflags.wcolors[wcolor_message].bg,
+                        &iflags.wcolors[wcolor_status].bg,
+                        &iflags.wcolors[wcolor_text].bg };
+int options_set_window_colors_flag = 0;
+
 staticfn int
 wc_set_window_colors(char *op)
 {
@@ -9806,14 +10030,7 @@ wc_set_window_colors(char *op)
      *  menu white/black message green/yellow status white/blue text
      * white/black
      */
-    static char **fgp[] = { &iflags.wcolors[wcolor_menu].fg,
-                            &iflags.wcolors[wcolor_message].fg,
-                            &iflags.wcolors[wcolor_status].fg,
-                            &iflags.wcolors[wcolor_text].fg };
-    static char **bgp[] = { &iflags.wcolors[wcolor_menu].bg,
-                            &iflags.wcolors[wcolor_message].bg,
-                            &iflags.wcolors[wcolor_status].bg,
-                            &iflags.wcolors[wcolor_text].bg };
+
     int j;
     int32 clr;
     char buf[BUFSZ];
@@ -9895,7 +10112,22 @@ wc_set_window_colors(char *op)
                              wn);
         }
     }
+    options_set_window_colors_flag = 1;
     return 1;
+}
+
+void
+options_free_window_colors(void)
+{
+    int j;
+
+    for (j = 0; j < WC_COUNT; ++j) {
+        if (*fgp[j])
+            free((genericptr_t) *fgp[j]), *fgp[j] = 0;
+        if (*bgp[j])
+            free((genericptr_t) *bgp[j]), *bgp[j] = 0;
+    }
+    options_set_window_colors_flag = 0;
 }
 
 /* set up for wizard mode if player or save file has requested it;

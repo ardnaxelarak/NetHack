@@ -1,4 +1,4 @@
-/* NetHack 3.7	engrave.c	$NHDT-Date: 1713657576 2024/04/20 23:59:36 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.157 $ */
+/* NetHack 3.7	engrave.c	$NHDT-Date: 1737345573 2025/01/19 19:59:33 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.165 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -37,7 +37,7 @@ struct _doengrave_ctx {
 
     size_t len;          /* # of nonspace chars of new engraving text */
 };
-
+#ifndef SFCTOOL
 staticfn int stylus_ok(struct obj *);
 staticfn boolean u_can_engrave(void);
 staticfn void doengrave_ctx_init(struct _doengrave_ctx *);
@@ -48,15 +48,16 @@ staticfn int engrave(void);
 staticfn const char *blengr(void);
 
 char *
-random_engraving(char *outbuf)
+random_engraving(char *outbuf, char *pristine_copy)
 {
     const char *rumor;
 
     /* a random engraving may come from the "rumors" file,
        or from the "engrave" file (formerly in an array here) */
-    if (!rn2(4) || !(rumor = getrumor(0, outbuf, TRUE)) || !*rumor)
-        (void) get_rnd_text(ENGRAVEFILE, outbuf, rn2, MD_PAD_RUMORS);
+    if (!rn2(4) || !(rumor = getrumor(0, pristine_copy, TRUE)) || !*rumor)
+        (void) get_rnd_text(ENGRAVEFILE, pristine_copy, rn2, MD_PAD_RUMORS);
 
+    Strcpy(outbuf, pristine_copy);
     wipeout_text(outbuf, (int) (strlen(outbuf) / 4), 0);
     return outbuf;
 }
@@ -214,13 +215,16 @@ can_reach_floor(boolean check_pit)
 
 /* give a message after caller has determined that hero can't reach */
 void
-cant_reach_floor(coordxy x, coordxy y, boolean up, boolean check_pit)
+cant_reach_floor(coordxy x, coordxy y, boolean up,
+                 boolean check_pit, boolean wand_engraving)
 {
-    You("can't reach the %s.",
-        up ? ceiling(x, y)
-           : (check_pit && can_reach_floor(FALSE))
-               ? "bottom of the pit"
-               : surface(x, y));
+    pline("%s can't reach the %s.",
+          wand_engraving
+              ? "The wand does nothing more, and the tip of the wand"
+              : "You",
+          up  ? ceiling(x, y)
+              : (check_pit && can_reach_floor(FALSE)) ? "bottom of the pit"
+                                                      : surface(x, y));
 }
 
 struct engr *
@@ -285,6 +289,31 @@ wipe_engr_at(coordxy x, coordxy y, xint16 cnt, boolean magical)
     }
 }
 
+/*
+ * Returns:
+ *    non-zero if it can be felt
+ */
+boolean
+engr_can_be_felt(struct engr *ep)
+{
+    boolean canfeel = FALSE;
+
+    switch (ep->engr_type) {
+        case ENGRAVE:
+        case HEADSTONE:
+        case BURN:
+            canfeel = TRUE;
+            break;
+        case DUST:
+        case MARK:
+        case ENGR_BLOOD:
+        default:
+            canfeel = FALSE;
+            break;
+    }
+    return canfeel;
+}
+
 void
 read_engr_at(coordxy x, coordxy y)
 {
@@ -292,7 +321,7 @@ read_engr_at(coordxy x, coordxy y)
     const char *eloc = surface(x, y);
     int sensed = 0;
 
-    /* Sensing an engraving does not require sight,
+    /* Sensing an engraving does not require sight for some engraving types,
      * nor does it necessarily imply comprehension (literacy).
      */
     if (ep && ep->engr_txt[actual_text][0]) {
@@ -355,6 +384,7 @@ read_engr_at(coordxy x, coordxy y)
             You("%s: \"%s\".", (Blind) ? "feel the words" : "read", et);
             Strcpy(ep->engr_txt[remembered_text], ep->engr_txt[actual_text]);
             ep->eread = 1;
+            ep->erevealed = 1;
             if (svc.context.run > 0)
                 nomul(0);
         }
@@ -365,13 +395,21 @@ void
 make_engr_at(
     coordxy x, coordxy y,
     const char *s,
+    const char *pristine_s,
     long e_time,
     int e_type)
 {
     int i;
     struct engr *ep;
     unsigned smem = Strlen(s) + 1;
+    boolean havepristine = FALSE;
 
+    if (pristine_s != NULL) {
+        unsigned prmem = Strlen(pristine_s) + 1;
+        if (prmem > smem)
+            smem = prmem;
+        havepristine = TRUE;
+    }
     if ((ep = engr_at(x, y)) != 0)
         del_engr(ep);
 
@@ -386,6 +424,8 @@ make_engr_at(
     ep->engr_txt[pristine_text] = ep->engr_txt[remembered_text] + smem;
     for(i = 0; i < text_states; ++i)
         Strcpy(ep->engr_txt[i], s);
+    if (havepristine)
+        Strcpy(ep->engr_txt[pristine_text], pristine_s);
     if (!strcmp(s, "Elbereth")) {
         /* engraving "Elbereth":  if done when making a level, it creates
            an old-style Elbereth that deters monsters when any objects are
@@ -399,7 +439,8 @@ make_engr_at(
     ep->engr_type = (xint8) ((e_type > 0) ? e_type : rnd(N_ENGRAVE - 1));
     ep->engr_szeach = smem;
     ep->engr_alloc = smem * 3;
-    /* we do not set ep->eread; the caller will need to if required */
+    /* we do not set ep->eread or ep->erevealed;
+     * the caller will need to if required */
 }
 
 /* delete any engraving at location <x,y> */
@@ -455,7 +496,7 @@ u_can_engrave(void)
             pline("What would you write?  \"Jonah was here\"?");
             return FALSE;
         } else if (is_whirly(u.ustuck->data)) {
-            cant_reach_floor(u.ux, u.uy, FALSE, FALSE);
+            cant_reach_floor(u.ux, u.uy, FALSE, FALSE, FALSE);
             return FALSE;
         }
         /* Note: for amorphous engulfers, writing attempt is allowed here
@@ -564,7 +605,7 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
         if (de->oep) {
             if (!Blind) {
                 de->type = (xint16) 0; /* random */
-                (void) random_engraving(de->buf);
+                (void) random_engraving(de->buf, de->ebuf);
             } else {
                 /* keep the same type so that feels don't
                    change and only the text is altered,
@@ -606,6 +647,7 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
                    "A few ice cubes drop from the wand.");
         if (!de->oep || (de->oep->engr_type != BURN))
             break;
+        FALLTHROUGH;
         /*FALLTHRU*/
     case WAN_CANCELLATION:
     case WAN_MAKE_INVISIBLE:
@@ -706,6 +748,7 @@ doengrave_sfx_item(struct _doengrave_ctx *de)
             de->type = DUST;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     /* Objects too large to engrave with */
     case BALL_CLASS:
@@ -901,6 +944,7 @@ doengrave(void)
     char *sp;         /* Place holder for space count of engr text */
     struct _doengrave_ctx *de;
     int retval;
+    boolean initial_msg_given = FALSE;
 
     /* Can the adventurer engrave at all? */
     if (!u_can_engrave())
@@ -942,12 +986,19 @@ doengrave(void)
         Your("message dissolves...");
         goto doengr_exit;
     }
-    if (de->otmp->oclass != WAND_CLASS && !can_reach_floor(TRUE)) {
-        cant_reach_floor(u.ux, u.uy, FALSE, TRUE);
-        goto doengr_exit;
+    if (!can_reach_floor(TRUE)) {
+        if (de->otmp->oclass != WAND_CLASS) {
+            cant_reach_floor(u.ux, u.uy, FALSE, TRUE, FALSE);
+            goto doengr_exit;
+        } else {
+            You("gesture, with your wand, towards the %s below you.",
+                surface(u.ux, u.uy));
+            initial_msg_given = TRUE;
+        }
     }
     if (IS_ALTAR(levl[u.ux][u.uy].typ)) {
-        You("make a motion towards the altar with %s.", de->writer);
+        if (!initial_msg_given)
+            You("make a motion towards the altar with %s.", de->writer);
         altar_wrath(u.ux, u.uy);
         goto doengr_exit;
     }
@@ -994,6 +1045,7 @@ doengrave(void)
     if (de->teleengr) {
         rloc_engr(de->oep);
         de->oep->eread = 0;
+        de->oep->erevealed = 0;
         de->disprefresh = TRUE;
         de->oep = (struct engr *) 0;
     }
@@ -1006,12 +1058,13 @@ doengrave(void)
     if (*de->buf) {
         struct engr *tmp_ep;
 
-        make_engr_at(u.ux, u.uy, de->buf, svm.moves, de->type);
+        make_engr_at(u.ux, u.uy, de->buf, de->ebuf, svm.moves, de->type);
         tmp_ep = engr_at(u.ux, u.uy);
         if (!Blind) {
             if (tmp_ep != 0) {
                 pline_The("engraving now reads: \"%s\".", de->buf);
                 tmp_ep->eread = 1;
+                tmp_ep->erevealed = 1;
                 de->disprefresh = TRUE;
             }
         }
@@ -1032,7 +1085,7 @@ doengrave(void)
     if (!de->ptext) {
         if (de->otmp && de->otmp->oclass == WAND_CLASS
             && !can_reach_floor(TRUE))
-            cant_reach_floor(u.ux, u.uy, FALSE, TRUE);
+            cant_reach_floor(u.ux, u.uy, FALSE, TRUE, TRUE);
         de->ret = ECMD_TIME;
         goto doengr_exit;
     }
@@ -1317,6 +1370,7 @@ engrave(void)
             obj_extract_self(stylus);
             stylus = hold_another_object(stylus, "You drop one %s!",
                                          doname(stylus), (char *) NULL);
+            nhUse(stylus);
         } else if (dulled && stylus->known) {
             /* reflect change in stylus->spe; not needed for splitstack
                since hold_another_object() does this */
@@ -1390,11 +1444,13 @@ engrave(void)
 
     (void) strncat(buf, svc.context.engraving.nextc,
                    min(space_left, endc - svc.context.engraving.nextc));
-    make_engr_at(u.ux, u.uy, buf, svm.moves - gm.multi,
+    make_engr_at(u.ux, u.uy, buf, NULL, svm.moves - gm.multi,
                  svc.context.engraving.type);
     oep = engr_at(u.ux, u.uy);
-    if (oep)
+    if (oep) {
         oep->eread = 1;
+        oep->erevealed = 1;
+    }
 
     if (*endc) {
         svc.context.engraving.nextc = endc;
@@ -1434,6 +1490,22 @@ sanitize_engravings(void)
     }
 }
 
+/* mark all engravings as not-discovered/not-read when saving bones */
+void
+forget_engravings(void)
+{
+    struct engr *ep;
+
+    for (ep = head_engr; ep; ep = ep->nxt_engr) {
+        ep->erevealed = ep->eread = 0;
+
+        /* Note: engr_txt[actual_text], engr_txt[rememberd_text], and
+         * engr_txt[pristine_text] retain their original text rather
+         * than get updated to reflect each engraving's current text.
+         * Does it matter? */
+    }
+}
+
 void
 engraving_sanity_check(void)
 {
@@ -1465,55 +1537,62 @@ void
 save_engravings(NHFILE *nhfp)
 {
     struct engr *ep, *ep2;
-    unsigned no_more_engr = 0;
+    unsigned no_more_engr = 0, engr_alloc;
+    unsigned szeach;
 
     for (ep = head_engr; ep; ep = ep2) {
         ep2 = ep->nxt_engr;
         if (ep->engr_alloc
-            && ep->engr_txt[actual_text][0] && perform_bwrite(nhfp)) {
-            if (nhfp->structlevel) {
-                bwrite(nhfp->fd, (genericptr_t) &(ep->engr_alloc),
-                       sizeof ep->engr_alloc);
-                bwrite(nhfp->fd, (genericptr_t) ep,
-                       sizeof (struct engr) + ep->engr_alloc);
-            }
+            && ep->engr_txt[actual_text][0] && update_file(nhfp)) {
+            engr_alloc = (unsigned) ep->engr_alloc;
+            szeach = ep->engr_szeach;
+            Sfo_unsigned(nhfp, &engr_alloc, "engraving-engr_alloc");
+            Sfo_engr(nhfp, ep, "engraving");
+            ep->engr_txt[actual_text] = (char *)(ep + 1);
+            ep->engr_txt[remembered_text] = ep->engr_txt[actual_text] + szeach;
+            ep->engr_txt[pristine_text] = ep->engr_txt[remembered_text] + szeach;
+            Sfo_char(nhfp, ep->engr_txt[actual_text], "engraving-actual_text", szeach);
+            Sfo_char(nhfp, ep->engr_txt[remembered_text], "engraving-remembered_text", szeach);
+            Sfo_char(nhfp, ep->engr_txt[pristine_text], "engraving-pristine_text", szeach);
         }
         if (release_data(nhfp))
             dealloc_engr(ep);
     }
-    if (perform_bwrite(nhfp)) {
-        if (nhfp->structlevel)
-            bwrite(nhfp->fd, (genericptr_t) &no_more_engr,
-                   sizeof no_more_engr);
+    if (update_file(nhfp)) {
+        Sfo_unsigned(nhfp, &no_more_engr, "engraving-engr_alloc");
     }
     if (release_data(nhfp))
         head_engr = 0;
 }
+#endif /* !SFCTOOL */
 
 void
 rest_engravings(NHFILE *nhfp)
 {
     struct engr *ep;
     unsigned lth = 0;
+    unsigned szeach;
 
     head_engr = 0;
     while (1) {
-        if (nhfp->structlevel)
-            mread(nhfp->fd, (genericptr_t) &lth, sizeof (unsigned));
-
+        Sfi_unsigned(nhfp, &lth, "engraving-engr_alloc");
         if (lth == 0)
             return;
         ep = newengr(lth);
-        if (nhfp->structlevel) {
-            mread(nhfp->fd, (genericptr_t) ep, sizeof (struct engr) + lth);
-        }
+        Sfi_engr(nhfp, ep, "engraving");
+        szeach = ep->engr_szeach;
         ep->nxt_engr = head_engr;
         head_engr = ep;
         ep->engr_txt[actual_text] = (char *) (ep + 1); /* Andreas Bormann */
-        ep->engr_txt[remembered_text] = ep->engr_txt[actual_text]
-                                      + ep->engr_szeach;
-        ep->engr_txt[pristine_text] = ep->engr_txt[remembered_text]
-                                    + ep->engr_szeach;
+        ep->engr_txt[remembered_text] = ep->engr_txt[actual_text] + szeach;
+        ep->engr_txt[pristine_text] = ep->engr_txt[remembered_text] + szeach;
+        Sfi_char(nhfp, ep->engr_txt[actual_text],
+                 "engraving-actual_text", (int) szeach);
+        Sfi_char(nhfp, ep->engr_txt[remembered_text],
+                 "engraving-remembered_text", (int) szeach);
+        Sfi_char(nhfp, ep->engr_txt[pristine_text],
+                 "engraving-pristine_text", (int) szeach);
+
         while (ep->engr_txt[actual_text][0] == ' ')
             ep->engr_txt[actual_text]++;
         while (ep->engr_txt[remembered_text][0] == ' ')
@@ -1525,6 +1604,7 @@ rest_engravings(NHFILE *nhfp)
     }
 }
 
+#ifndef SFCTOOL
 DISABLE_WARNING_FORMAT_NONLITERAL
 
 /* to support '#stats' wizard-mode command */
@@ -1604,7 +1684,7 @@ make_grave(coordxy x, coordxy y, const char *str)
     del_engr_at(x, y);
     if (!str)
         str = get_rnd_text(EPITAPHFILE, buf, rn2, MD_PAD_RUMORS);
-    make_engr_at(x, y, str, 0L, HEADSTONE);
+    make_engr_at(x, y, str, NULL, 0L, HEADSTONE);
     return;
 }
 
@@ -1632,15 +1712,18 @@ see_engraving(struct engr *ep)
     newsym(ep->engr_x, ep->engr_y);
 }
 
-/* like see_engravings() but overrides vision, but
-   only for some types of engravings that can be felt */
+/* like see_engravings() but overrides vision, but only for some types
+   of engravings that can be felt  [this isn't actually used anywhere?] */
 void
 feel_engraving(struct engr *ep)
 {
-    ep->eread = 1;
-    map_engraving(ep, 1);
-    /* in case it's beneath something, redisplay the something */
-    newsym(ep->engr_x, ep->engr_y);
+    if (engr_can_be_felt(ep)) {
+        ep->eread = 1;
+        ep->erevealed = 1;
+        map_engraving(ep, 1);
+        /* in case it's beneath something, redisplay the something */
+        newsym(ep->engr_x, ep->engr_y);
+    }
 }
 
 static const char blind_writing[][21] = {
@@ -1669,5 +1752,5 @@ blengr(void)
 {
     return ROLL_FROM(blind_writing);
 }
-
+#endif /* !SFCTOOL */
 /*engrave.c*/

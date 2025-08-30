@@ -18,7 +18,7 @@
 
 ATTRNORETURN static void xexit(int) NORETURN;
 ATTRNORETURN extern void panic(const char *, ...) NORETURN;
-FILE *fopen_datafile(const char *, const char *);
+FILE *fopen_datafile(const char *, const char *, int);
 
 #ifdef DLB
 #ifdef DLBLIB
@@ -67,14 +67,14 @@ static char origdir[255] = "";
  *
  * dlb COMMANDoptions arg... files...
  * commands:
- *  dlb x	extract all files
- *  dlb c	build the archive
- *  dlb t	list the archive
+ *  dlb x       extract all files
+ *  dlb c       build the archive
+ *  dlb t       list the archive
  * options:
- *  v		verbose
- *  f file	specify archive file (default DLBFILE)
- *  I file	specify file for list of files (default LIBLISTFILE)
- *  C dir	chdir to dir (used ONCE, not like tar's -C)
+ *  v           verbose
+ *  f file      specify archive file (default DLBFILE)
+ *  I file      specify file for list of files (default LIBLISTFILE)
+ *  C dir       chdir to dir (used ONCE, not like tar's -C)
  */
 
 ATTRNORETURN static void
@@ -134,7 +134,7 @@ Write(int out, char *buf, long len)
 
 /* open_library(dlb.c) needs this (which normally comes from src/files.c) */
 FILE *
-fopen_datafile(const char *filename, const char *mode)
+fopen_datafile(const char *filename, const char *mode, int prefix UNUSED)
 {
     return fopen(filename, mode);
 }

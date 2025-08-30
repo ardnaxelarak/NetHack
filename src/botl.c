@@ -1,4 +1,4 @@
-/* NetHack 3.7	botl.c	$NHDT-Date: 1720397739 2024/07/08 00:15:39 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.264 $ */
+/* NetHack 3.7	botl.c	$NHDT-Date: 1742207239 2025/03/17 02:27:19 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.274 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2006. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -422,7 +422,7 @@ max_rank_sz(void)
 long
 botl_score(void)
 {
-    long deepest = deepest_lev_reached(FALSE);
+    long deepest = (long) deepest_lev_reached(FALSE);
     long umoney, depthbonus;
 
     /* hidden_gold(False): only gold in containers whose contents are known */
@@ -430,10 +430,10 @@ botl_score(void)
     /* don't include initial gold; don't impose penalty if it's all gone */
     if ((umoney -= u.umoney0) < 0L)
         umoney = 0L;
-    depthbonus = 50 * (deepest - 1)
-                 + (deepest > 30) ? 10000
-                   : (deepest > 20) ? 1000 * (deepest - 20)
-                     : 0;
+    depthbonus = (50L * (deepest - 1L))
+                 + ((deepest > 30L) ? 10000L
+                    : (deepest > 20L) ? (1000L * (deepest - 20L))
+                      : 0L);
     /* neither umoney nor depthbonus can grow unusually big (gold due to
        weight); u.urexp might */
     return nowrap_add(u.urexp, umoney + depthbonus);
@@ -1325,7 +1325,10 @@ eval_notify_windowport_field(
 
     reset = FALSE;
 #ifdef STATUS_HILITES
-    if (!gu.update_all && !chg && curr->time) {
+    if (gu.update_all) {
+        chg = 0;
+        curr->time = prev->time = 0L;
+    } else if (!chg && curr->time) {
         reset = hilite_reset_needed(prev, gb.bl_hilite_moves);
         if (reset)
             curr->time = prev->time = 0L;
@@ -1949,7 +1952,7 @@ static const struct fieldid_t {
     { "xp",       BL_EXP },
     { "exp",      BL_EXP },
     { "flags",    BL_CONDITION },
-    {0,           BL_FLUSH }
+    { NULL,       BL_FLUSH }
 };
 
 /* format arguments */
@@ -2024,8 +2027,8 @@ status_eval_next_unhilite(void)
     long next_unhilite, this_unhilite;
 
     gb.bl_hilite_moves = svm.moves; /* simplified; at one point we used to
-                                    * try to encode fractional amounts for
-                                    * multiple moves within same turn */
+                                     * try to encode fractional amounts for
+                                     * multiple moves within same turn */
     /* figure out whether an unhilight needs to be performed now */
     next_unhilite = 0L;
     for (i = 0; i < MAXBLSTATS; ++i) {
@@ -2424,8 +2427,7 @@ has_ltgt_percentnumber(const char *str)
 }
 
 /* splitsubfields(): splits str in place into '+' or '&' separated strings.
- * returns number of strings, or -1 if more than maxsf or MAX_SUBFIELDS
- */
+   returns number of strings, or -1 if more than maxsf or MAX_SUBFIELDS */
 staticfn int
 splitsubfields(char *str, char ***sfarr, int maxsf)
 {
@@ -2562,7 +2564,7 @@ parse_status_hl2(char (*s)[QBUFSZ], boolean from_configfile)
         "Satiated", "", "Hungry", "Weak", "Fainting", "Fainted", "Starved"
     };
     char *tmp, *how;
-    int sidx = 0, i = -1, dt = -1;
+    int sidx = 0, i = -1, dt = ANY_INVALID;
     int coloridx = -1, successes = 0;
     int disp_attrib = 0;
     boolean percent, changed, numeric, down, up,
@@ -2575,7 +2577,7 @@ parse_status_hl2(char (*s)[QBUFSZ], boolean from_configfile)
     /* Examples:
         3.6.1:
       OPTION=hilite_status: hitpoints/<10%/red
-      OPTION=hilite_status: hitpoints/<10%/red/<5%/purple/1/red+blink+inverse
+      OPTION=hilite_status: hitpoints/<10%/red/<5%/purple/1/red&blink+inverse
       OPTION=hilite_status: experience/down/red/up/green
       OPTION=hilite_status: cap/strained/yellow/overtaxed/orange
       OPTION=hilite_status: title/always/blue

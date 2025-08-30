@@ -459,7 +459,7 @@ void
 settty(const char *s)
 {
     if (!bombing)
-        end_screen();
+        term_end_screen();
     if (s)
         raw_print(s);
     if (settty_needed) {
@@ -513,7 +513,7 @@ setftty(void)
     sg.sm.tt2_char = tt2_char_active;
     setctty();
 
-    start_screen();
+    term_start_screen();
     settty_needed = TRUE;
 }
 
@@ -601,7 +601,7 @@ getwindowsz(void)
 
 #ifdef ENHANCED_SYMBOLS
 /*
- * set in tty_start_screen() and allows
+ * set in term_start_screen() and allows
  * OS-specific changes that may be
  * required for support of utf8.
  * Currently a placeholder for VMS.

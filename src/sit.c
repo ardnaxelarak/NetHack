@@ -7,6 +7,7 @@
 #include "artifact.h"
 
 staticfn void throne_sit_effect(void);
+staticfn void rndcurse_inner(boolean);
 staticfn int lay_an_egg(void);
 
 /* take away the hero's money */
@@ -32,11 +33,15 @@ take_gold(void)
     }
 }
 
+staticfn void special_throne_effect(int effect);
+
 /* maybe do something when hero sits on a throne */
 staticfn void
 throne_sit_effect(void)
 {
     coordxy tx = u.ux, ty = u.uy;
+
+    boolean special_throne = !!In_V_tower(&u.uz);
 
     if (rnd(6) > 4) { /* [why so convoluted? it's the same as '!rn2(3)'] */
         int effect = rnd(13);
@@ -54,6 +59,11 @@ throne_sit_effect(void)
             which = atoi(buf);
             if (which >= 1 && which <= 13)
                 effect = which;
+        }
+
+        if (special_throne) {
+            special_throne_effect(effect);
+            return;
         }
 
         switch (effect) {
@@ -158,6 +168,7 @@ throne_sit_effect(void)
                     default:
                     case 2: /* more than 1 eye */
                         eye = makeplural(eye);
+                        FALLTHROUGH;
                         /*FALLTHRU*/
                     case 1: /* one eye (Cyclops, floating eye) */
                         Your("%s %s...", eye, vtense(eye, "tingle"));
@@ -211,7 +222,8 @@ throne_sit_effect(void)
        only happened when teleporting back to the same point where hero
        started from.]  "Analyzing a throne" doesn't really make any sense
        but if the answer is yes than it will vanish in a puff of logic. */
-    if (!rn2(3) && (!wizard || y_n("Analyze throne?") == 'y')) {
+    if (!special_throne &&
+        !rn2(3) && (!wizard || y_n("Analyze throne?") == 'y')) {
         levl[tx][ty].typ = ROOM, levl[tx][ty].flags = 0;
         map_background(tx, ty, FALSE);
         newsym_force(tx, ty);
@@ -219,6 +231,110 @@ throne_sit_effect(void)
            Douglas Adams' _The_Hitchhiker's_Guide_to_the_Galaxy_. */
         pline_The("throne %s in a puff of logic.",
                   cansee(tx, ty) ? "vanishes" : "has vanished");
+    }
+}
+
+/* special throne in Vlad's tower: effect is 1 to 13 inclusive */
+staticfn void
+special_throne_effect(int effect) {
+    coordxy tx = u.ux, ty = u.uy;
+
+    switch (effect) {
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+        /* 4 chances of a wish, but then the throne disappears.
+
+           This is the only way the throne can disappear from sitting
+           on it, so if you sit on it enough (enduring the negative
+           effects) you are guaranteed an eventual wish. */
+        makewish();
+        levl[tx][ty].typ = ROOM, levl[tx][ty].flags = 0;
+        map_background(tx, ty, FALSE);
+        newsym_force(tx, ty);
+        pline_The("throne disintegrates, having spent its power.");
+        break;
+    case 5:
+        /* permanent level drain */
+        pline("Sitting on the throne was a terrible experience.");
+        if (!Drain_resistance) {
+            losexp("a bad experience sitting on a throne");
+            if (u.ulevelmax > u.ulevel)
+                u.ulevelmax -= 1;
+        }
+        break;
+    case 6:
+        /* containers become cursed */
+        rndcurse_inner(TRUE);
+        break;
+    case 7:
+        /* lose an intrinsic */
+        attrcurse();
+        pline_The("throne somehow seems to be amused.");
+        break;
+    case 8:
+    {
+        /* level teleport to Vibrating Square level */
+        d_level vs_level;
+        find_hell(&vs_level);
+        vs_level.dlevel = svd.dungeons[vs_level.dnum].num_dunlevs - 1;
+        if (u.uhave.amulet)
+            You_feel("extremely disoriented for a moment.");
+        else
+            schedule_goto(
+                &vs_level, UTOTYPE_NONE, (char *) 0,
+                "You feel extremely out of place.");
+        break;
+    }
+    case 9:
+    {
+        /* summon demons; a NULL argument to msummon summons demons as
+           though they were summoned by the Wizard of Yendor */
+        pline_The("throne seeems to be calling for help!");
+        msummon(NULL);
+        msummon(NULL);
+        msummon(NULL);
+        break;
+    }
+    case 10:
+    {
+        /* confused blessed remove curse effect */
+        struct obj fake_spellbook;
+        long save_confusion = HConfusion;
+
+        fake_spellbook = cg.zeroobj;
+        fake_spellbook.otyp = SPE_REMOVE_CURSE;
+        fake_spellbook.oclass = SPBOOK_CLASS;
+        fake_spellbook.blessed = 1;
+        HConfusion = 1L;
+        (void) seffects(&fake_spellbook);
+        HConfusion = save_confusion;
+        break;
+    }
+    case 11:
+        /* polymorph effect (not blocked by magic resistance) */
+        pline("This throne was not meant for those such as you!");
+        You_feel("a change coming over you.");
+        polyself(POLY_NOFLAGS);
+        break;
+    case 12:
+        /* acid damage */
+        pline("The throne is covered in acid!");
+        losehp(Acid_resistance ? rnd(16) : rnd(80), "acidic chair",
+               KILLED_BY_AN);
+        exercise(A_CON, FALSE);
+        break;
+    case 13:
+    {
+        /* ability shuffle */
+        int ability;
+        pline("As you sit on the throne, your body and mind start to warp.");
+        for (ability = 0; ability < A_MAX; ++ability) {
+            adjattrib(ability, rn2(5) - 2, -1);
+        }
+        break;
+    }
     }
 }
 
@@ -315,7 +431,10 @@ dosit(void)
         } else if (obj->otyp == TOWEL) {
             pline("It's probably not a good time for a picnic...");
         } else {
-            You("sit on %s.", the(xname(obj)));
+            if (slithy(gy.youmonst.data))
+                You("coil up around %s.", the(xname(obj)));
+            else
+                You("sit on %s.", the(xname(obj)));
             if (obj->otyp == CORPSE && amorphous(&mons[obj->corpsenm]))
                 pline("It's squishy...");
             else if (obj->otyp == CREAM_PIE) {
@@ -433,6 +552,12 @@ dosit(void)
 void
 rndcurse(void)
 {
+    rndcurse_inner(FALSE);
+}
+
+staticfn void
+rndcurse_inner(boolean prefer_containers)
+{
     int nobj = 0;
     int cnt, onum;
     struct obj *otmp;
@@ -445,22 +570,29 @@ rndcurse(void)
 
     if (Antimagic) {
         shieldeff(u.ux, u.uy);
-        You(mal_aura, "you");
     }
+
+    You(mal_aura, "you");
 
     for (otmp = gi.invent; otmp; otmp = otmp->nobj) {
         /* gold isn't subject to being cursed or blessed */
         if (otmp->oclass == COIN_CLASS)
             continue;
+        if (prefer_containers && !otmp->cobj)
+            continue;
         nobj++;
     }
+    cnt = rnd(6 / ((!!Antimagic) + (!!Half_spell_damage) + 1));
+    if (prefer_containers)
+        cnt = nobj * 2;
     if (nobj) {
-        for (cnt = rnd(6 / ((!!Antimagic) + (!!Half_spell_damage) + 1));
-             cnt > 0; cnt--) {
+        for (; cnt > 0; cnt--) {
             onum = rnd(nobj);
             for (otmp = gi.invent; otmp; otmp = otmp->nobj) {
                 /* as above */
                 if (otmp->oclass == COIN_CLASS)
+                    continue;
+                if (prefer_containers && !otmp->cobj)
                     continue;
                 if (--onum == 0)
                     break; /* found the target */
@@ -517,6 +649,7 @@ attrcurse(void)
             ret = FIRE_RES;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 2:
         if (HTeleportation & INTRINSIC) {
@@ -525,6 +658,7 @@ attrcurse(void)
             ret = TELEPORT;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 3:
         if (HPoison_resistance & INTRINSIC) {
@@ -533,6 +667,7 @@ attrcurse(void)
             ret = POISON_RES;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 4:
         if (HTelepat & INTRINSIC) {
@@ -543,6 +678,7 @@ attrcurse(void)
             ret = TELEPAT;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 5:
         if (HCold_resistance & INTRINSIC) {
@@ -551,6 +687,7 @@ attrcurse(void)
             ret = COLD_RES;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 6:
         if (HInvis & INTRINSIC) {
@@ -559,6 +696,7 @@ attrcurse(void)
             ret = INVIS;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 7:
         if (HSee_invisible & INTRINSIC) {
@@ -574,6 +712,7 @@ attrcurse(void)
             ret = SEE_INVIS;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 8:
         if (HFast & INTRINSIC) {
@@ -582,6 +721,7 @@ attrcurse(void)
             ret = FAST;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 9:
         if (HStealth & INTRINSIC) {
@@ -590,6 +730,7 @@ attrcurse(void)
             ret = STEALTH;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 10:
         /* intrinsic protection is just disabled, not set back to 0 */
@@ -599,6 +740,7 @@ attrcurse(void)
             ret = PROTECTION;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     case 11:
         if (HAggravate_monster & INTRINSIC) {
@@ -607,6 +749,7 @@ attrcurse(void)
             ret = AGGRAVATE_MONSTER;
             break;
         }
+        FALLTHROUGH;
         /*FALLTHRU*/
     default:
         break;

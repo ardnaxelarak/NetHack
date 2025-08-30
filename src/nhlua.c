@@ -1,4 +1,4 @@
-/* NetHack 3.7	nhlua.c	$NHDT-Date: 1711034373 2024/03/21 15:19:33 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.141 $ */
+/* NetHack 3.7	nhlua.c	$NHDT-Date: 1744963460 2025/04/18 00:04:20 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.153 $ */
 /*      Copyright (c) 2018 by Pasi Kallinen */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -25,6 +25,7 @@
 
 struct e;
 
+#ifndef SFCTOOL
 /* lua_CFunction prototypes */
 #ifdef DUMPLOG
 staticfn int nhl_dump_fmtstr(lua_State *);
@@ -64,6 +65,8 @@ staticfn int nhl_an(lua_State *);
 staticfn int nhl_rn2(lua_State *);
 staticfn int nhl_random(lua_State *);
 staticfn int nhl_level_difficulty(lua_State *);
+staticfn int nhl_is_genocided(lua_State *);
+staticfn int nhl_get_debug_themerm_name(lua_State *);
 staticfn void init_nhc_data(lua_State *);
 staticfn int nhl_push_anything(lua_State *, int, void *);
 staticfn int nhl_meta_u_index(lua_State *);
@@ -89,7 +92,9 @@ staticfn void nhl_warn(void *, const char *, int);
 staticfn void nhl_clearfromtable(lua_State *, int, int, struct e *);
 staticfn int nhl_panic(lua_State *);
 staticfn void nhl_hookfn(lua_State *, lua_Debug *);
+#endif /* !SFCTOOL */
 
+#ifndef SFCTOOL
 static const char *const nhcore_call_names[NUM_NHCORE_CALLS] = {
     "start_new_game",
     "restore_old_game",
@@ -100,6 +105,7 @@ static const char *const nhcore_call_names[NUM_NHCORE_CALLS] = {
     "leave_tutorial",
 };
 static boolean nhcore_call_available[NUM_NHCORE_CALLS];
+#endif
 
 /* internal structure that hangs off L->ud (but use lua_getallocf() )
  * Note that we use it for both memory use tracking and instruction counting.
@@ -124,6 +130,7 @@ typedef struct nhl_user_data {
 #endif
 } nhl_user_data;
 
+#ifndef SFCTOOL
 static lua_State *luapat;   /* instance for file pattern matching */
 
 void
@@ -430,6 +437,7 @@ nhl_gettrap(lua_State *L)
                                     get_trapname_bytype(ttmp->ttyp));
             nhl_add_table_entry_bool(L, "tseen", ttmp->tseen);
             nhl_add_table_entry_bool(L, "madeby_u", ttmp->madeby_u);
+            nhl_add_table_entry_bool(L, "once", ttmp->once);
             switch (ttmp->ttyp) {
             case SQKY_BOARD:
                 nhl_add_table_entry_int(L, "tnote", ttmp->tnote);
@@ -954,6 +962,51 @@ nhl_level_difficulty(lua_State *L)
     return 1;
 }
 
+/* local x = nh.is_genocided("vampire") */
+staticfn int
+nhl_is_genocided(lua_State *L)
+{
+    int argc = lua_gettop(L);
+
+    if (argc == 1) {
+        const char *paramstr = luaL_checkstring(L, 1);
+        int mgend;
+        int i = name_to_mon(paramstr, &mgend);
+
+        lua_pushboolean(L, (i != NON_PM)
+                        && (svm.mvitals[i].mvflags & G_GENOD)
+                        ? TRUE : FALSE);
+    } else {
+        nhl_error(L, "Wrong args");
+    }
+    return 1;
+}
+
+/* local debug_themerm = nh.debug_themerm(isfill)
+ * if isfill is false, returns value of env variable THEMERM
+ * if isfill is true,  returns value of env variable THEMERMFILL
+ * return nil if not in wizard mode or the variable isn't set */
+staticfn int
+nhl_get_debug_themerm_name(lua_State *L)
+{
+    int argc = lua_gettop(L);
+    if (argc == 1) {
+        char *dbg_themerm = (char *) 0;
+        boolean is_fill = lua_toboolean(L, 1);
+        lua_pop(L, 1);
+        if (wizard)
+            dbg_themerm = getenv(is_fill ? "THEMERMFILL" : "THEMERM");
+        if (!dbg_themerm || !*dbg_themerm) {
+            lua_pushnil(L);
+        } else {
+            lua_pushstring(L, dbg_themerm);
+        }
+    } else {
+        nhl_error(L, "debug_themerm should have 1 boolean arg");
+    }
+    return 1;
+}
+
 RESTORE_WARNING_UNREACHABLE_CODE
 
 /* get mandatory integer value from table */
@@ -999,9 +1052,18 @@ char *
 get_table_str_opt(lua_State *L, const char *name, char *defval)
 {
     const char *ret;
+    int ltyp;
 
     lua_getfield(L, -1, name);
-    ret = luaL_optstring(L, -1, defval);
+    ltyp = lua_type(L, -1);
+    if (ltyp == LUA_TSTRING || ltyp == LUA_TNIL) {
+        ret = luaL_optstring(L, -1, defval);
+    } else if (ltyp == LUA_TFUNCTION) {
+        nhl_pcall_handle(L, 0, 1, "get_table_str_opt", NHLpa_panic);
+        ret = luaL_optstring(L, -1, defval);
+    } else {
+        nhl_error(L, "get_table_str_opt: no string");
+    }
     if (ret) {
         lua_pop(L, 1);
         return dupstr(ret);
@@ -1207,19 +1269,26 @@ get_nh_lua_variables(void)
 
 RESTORE_WARNING_UNREACHABLE_CODE
 
+#endif /* !SFCTOOL */
+
+#ifdef SFCTOOL
+char *lua_data;
+#endif
+
 /* save nh_lua_variables table to file */
 void
 save_luadata(NHFILE *nhfp)
 {
     unsigned lua_data_len;
+#ifndef SFCTOOL
     char *lua_data = get_nh_lua_variables(); /* note: '\0' terminated */
+#endif
 
     if (!lua_data)
         lua_data = dupstr(emptystr);
     lua_data_len = Strlen(lua_data) + 1; /* +1: include the terminator */
-    bwrite(nhfp->fd, (genericptr_t) &lua_data_len,
-           (unsigned) sizeof lua_data_len);
-    bwrite(nhfp->fd, (genericptr_t) lua_data, lua_data_len);
+    Sfo_unsigned(nhfp, &lua_data_len, "luadata-lua_data_len");
+    Sfo_char(nhfp, lua_data, "luadata", lua_data_len);
     free(lua_data);
 }
 
@@ -1227,19 +1296,25 @@ save_luadata(NHFILE *nhfp)
 void
 restore_luadata(NHFILE *nhfp)
 {
-    unsigned lua_data_len;
+    unsigned lua_data_len = 0;
+#ifndef SFCTOOL
     char *lua_data;
+#endif /* !SFCTOOL */
 
-    mread(nhfp->fd, (genericptr_t) &lua_data_len,
-          (unsigned) sizeof lua_data_len);
+    Sfi_unsigned(nhfp, &lua_data_len, "luadata-lua_data_len");
     lua_data = (char *) alloc(lua_data_len);
-    mread(nhfp->fd, (genericptr_t) lua_data, lua_data_len);
+    Sfi_char(nhfp, lua_data, "luadata", lua_data_len);
+
+#ifndef SFCTOOL
     if (!gl.luacore)
         l_nhcore_init();
     luaL_loadstring(gl.luacore, lua_data);
     free(lua_data);
     nhl_pcall_handle(gl.luacore, 0, 0, "restore_luadata", NHLpa_panic);
+#endif /* !SFCTOOL */
 }
+
+#ifndef SFCTOOL
 
 /* local stairs = stairways(); */
 staticfn int
@@ -1577,6 +1652,7 @@ nhl_gamestate(lua_State *L)
     struct obj *otmp;
     int argc = lua_gettop(L);
     boolean reststate = (argc > 0) ? lua_toboolean(L, -1) : FALSE;
+    int otyp;
 
     debugpline4("gamestate: %d:%d (%c vs %c)", u.uz.dnum, u.uz.dlevel,
                 reststate ? 'T' : 'F', gg.gmst_stored ? 't' : 'f');
@@ -1608,11 +1684,18 @@ nhl_gamestate(lua_State *L)
         assert(gg.gmst_mvitals != NULL);
         (void) memcpy((genericptr_t) &svm.mvitals, gg.gmst_mvitals,
                       sizeof svm.mvitals);
+        /* clear user-given object type names */
+        for (otyp = 0; otyp < NUM_OBJECTS; otyp++)
+            if (objects[otyp].oc_uname) {
+                free(objects[otyp].oc_uname);
+                objects[otyp].oc_uname = (char *) 0;
+            }
         /* some restored state would confuse the level change in progress */
         u.uz = cur_uz, u.uz0 = cur_uz0;
         init_uhunger();
         free_tutorial(); /* release gg.gmst_XYZ */
         gg.gmst_stored = FALSE;
+        (void) memcpy(svs.spl_book, gg.gmst_spl_book, sizeof svs.spl_book);
     } else if (!reststate && !gg.gmst_stored) {
         /* store game state */
         gg.gmst_moves = svm.moves;
@@ -1633,6 +1716,8 @@ nhl_gamestate(lua_State *L)
         gg.gmst_mvitals = (genericptr_t) alloc(sizeof svm.mvitals);
         (void) memcpy(gg.gmst_mvitals, (genericptr_t) &svm.mvitals,
                       sizeof svm.mvitals);
+        (void) memcpy(gg.gmst_spl_book, svs.spl_book, sizeof svs.spl_book);
+        (void) memset(svs.spl_book, 0, sizeof(svs.spl_book));
         gg.gmst_stored = TRUE;
     } else {
         impossible("nhl_gamestate: inconsistent state (%s vs %s)",
@@ -1722,6 +1807,8 @@ static const struct luaL_Reg nhl_functions[] = {
     { "rn2", nhl_rn2 },
     { "random", nhl_random },
     { "level_difficulty", nhl_level_difficulty },
+    { "is_genocided", nhl_is_genocided },
+    { "debug_themerm", nhl_get_debug_themerm_name },
     { "parse_config", nhl_parse_config },
     { "get_config", nhl_get_config },
     { "get_config_errors", l_get_config_errors },
@@ -1996,6 +2083,8 @@ nhl_pcall_handle(lua_State *L, int nargs, int nresults, const char *name,
         case NHLpa_panic:
             panic("Lua error %d:%s %s", nud->sid,
                   nud->name ? nud->name : "(unknown)", lua_tostring(L, -1));
+            /*NOTREACHED*/
+            break;
         case NHLpa_impossible:
             impossible("Lua error: %d:%s %s", nud->sid,
                        nud->name ? nud->name : "(unknown)",
@@ -2809,7 +2898,7 @@ nhl_alloc(void *ud, void *ptr, size_t osize UNUSED, size_t nsize)
             return NULL;
     }
 
-    return re_alloc(ptr, nsize);
+    return re_alloc(ptr, (unsigned) nsize);
 }
 
 DISABLE_WARNING_UNREACHABLE_CODE
@@ -2915,6 +3004,8 @@ nhlL_newstate(nhl_sandbox_info *sbi, const char *name)
 
     return L;
 }
+
+#endif /* !SFCTOOL */
 
 /*
 (See end of comment for conclusion.)

@@ -5,6 +5,7 @@
 
 #include "hack.h"
 
+#ifndef SFCTOOL
 staticfn boolean no_bones_level(d_level *);
 staticfn void goodfruit(int);
 staticfn void resetobjs(struct obj *, boolean);
@@ -105,6 +106,7 @@ resetobjs(struct obj *ochain, boolean restore)
             otmp->rknown = 0;
             otmp->lknown = 0;
             otmp->cknown = 0;
+            otmp->tknown = 0;
             otmp->invlet = 0;
             otmp->no_charge = 0;
             otmp->how_lost = LOST_NONE;
@@ -444,6 +446,7 @@ savebones(int how, time_t when, struct obj *corpse)
     iter_mons(remove_mon_from_bones); /* send various unique monsters away, */
     dmonsfree();                      /* then discard dead or gone monsters */
 
+    forget_engravings(); /* next hero won't have read any engravings yet */
     /* mark all named fruits as nonexistent; if/when we come to instances
        of any of them we'll mark those as existing (using goodfruit()) */
     for (f = gf.ffruit; f; f = f->nextf)
@@ -500,10 +503,40 @@ savebones(int how, time_t when, struct obj *corpse)
             (void) obj_attach_mid(corpse, mtmp->m_id);
     }
     if (mtmp) {
+        int i;
+
         mtmp->m_lev = (u.ulevel ? u.ulevel : 1);
         mtmp->mhp = mtmp->mhpmax = u.uhpmax;
         mtmp->female = flags.female;
         mtmp->msleeping = 1;
+
+        if (!has_ebones(mtmp))
+            newebones(mtmp);
+        if (has_ebones(mtmp)) {
+            for (i = 0; i <= NUM_ROLES; ++i) {
+                if (!strcmp(gu.urole.name.m, roles[i].name.m)) {
+                    EBONES(mtmp)->role = i;
+                    break;
+                }
+                /* impossible("savebones: bad gu.urole.name.m \"%s\"",
+                              gu.urole.name.m); */
+            }
+            for (i = 0; i <= NUM_RACES; ++i) {
+                if (!strcmp(gu.urace.noun, races[i].noun)) {
+                    EBONES(mtmp)->race = i;
+                    break;
+                }
+                /* impossible("savebones: bad gu.urace.noun \"%s\"",
+                              gu.urace.noun); */
+            }
+            EBONES(mtmp)->oldalign = u.ualign;
+            EBONES(mtmp)->deathlevel = u.ulevel;
+            EBONES(mtmp)->luck = u.uluck; /* moreluck not included */
+            EBONES(mtmp)->mnum = Role_switch;
+            EBONES(mtmp)->female = flags.female;
+            EBONES(mtmp)->demigod = u.uevent.udemigod;
+            EBONES(mtmp)->crowned = u.uevent.uhand_of_elbereth;
+        }
     }
     for (mtmp = fmon; mtmp; mtmp = mtmp->nmon) {
         set_ghostly_objlist(mtmp->minvent);
@@ -578,20 +611,19 @@ savebones(int how, time_t when, struct obj *corpse)
 
     nhfp->mode = WRITING;
     store_version(nhfp);
-    store_savefileinfo(nhfp);
-    if (nhfp->structlevel) {
-        /* if a bones pool digit is in use, it precedes the bonesid
-           string and isn't recorded in the file */
-        bwrite(nhfp->fd, (genericptr_t) &c, sizeof c);
-        bwrite(nhfp->fd, (genericptr_t) bonesid, (unsigned) c); /* DD.nn */
-        savefruitchn(nhfp);
-    }
+    /* if a bones pool digit is in use, it precedes the bonesid
+       string and isn't recorded in the file */
+    Sfo_char(nhfp, &c, "bones_count", 1);
+    Sfo_char(nhfp, bonesid, "bonesid", (int) c);       /* DD.nnn */
+    savefruitchn(nhfp);
     update_mlstmv(); /* update monsters for eventual restoration */
     savelev(nhfp, ledger_no(&u.uz));
     close_nhfile(nhfp);
     commit_bonesfile(&u.uz);
     compress_bonesfile();
 }
+
+#endif /* !SFCTOOL */
 
 int
 getbones(void)
@@ -601,6 +633,7 @@ getbones(void)
     char c = 0, *bonesid,
          oldbonesid[40] = { 0 }; /* was [10]; more should be safer */
 
+#ifndef SFCTOOL
     if (discover) /* save bones files for real games */
         return 0;
 
@@ -612,6 +645,7 @@ getbones(void)
         return 0;
     if (no_bones_level(&u.uz))
         return 0;
+#endif /* !SFCTOOL */
 
     nhfp = open_bonesfile(&u.uz, &bonesid);
     if (!nhfp)
@@ -623,7 +657,7 @@ getbones(void)
         return 0;
     }
 
-    if (validate(nhfp, gb.bones, FALSE) != 0) {
+    if (validate(nhfp, gb.bones, FALSE) != SF_UPTODATE) {
         if (!wizard)
             pline("Discarding unusable bones; no need to panic...");
         ok = FALSE;
@@ -636,14 +670,9 @@ getbones(void)
                 return 0;
             }
         }
-        if (nhfp->structlevel) {
-            /* if a bones pool digit is in use, it precedes the bonesid
-               string and wasn't recorded in the file */
-            mread(nhfp->fd, (genericptr_t) &c,
-                  sizeof c); /* length including terminating '\0' */
+        Sfi_char(nhfp, &c, "bones_count", 1); /* length incl. '\0' */
             if ((unsigned) c <= sizeof oldbonesid) {
-                mread(nhfp->fd, (genericptr_t) oldbonesid,
-                      (unsigned) c); /* DD.nn or Qrrr.n for role rrr */
+                Sfi_char(nhfp, oldbonesid, "bonesid", (int) c);
             } else {
                 if (wizard)
                     debugpline2("Abandoning bones , %u > %u.",
@@ -653,7 +682,6 @@ getbones(void)
                 /* ToDo: maybe unlink these problematic bones? */
                 return 0;
             }
-        }
         if (strcmp(bonesid, oldbonesid) != 0) {
             char errbuf[BUFSZ];
 
@@ -717,6 +745,8 @@ getbones(void)
     return ok;
 }
 
+#ifndef SFCTOOL
+
 /* check whether current level contains bones from a particular player */
 boolean
 bones_include_name(const char *name)
@@ -773,5 +803,31 @@ fix_ghostly_obj(struct obj *obj)
     }
     obj->ghostly = 0;
 }
+
+void
+newebones(struct monst *mtmp)
+{
+    if (!mtmp->mextra)
+        mtmp->mextra = newmextra();
+    if (!EBONES(mtmp)) {
+        EBONES(mtmp) = (struct ebones *) alloc(
+            sizeof (struct ebones));
+        (void) memset((genericptr_t) EBONES(mtmp), 0,
+                      sizeof (struct ebones));
+        EBONES(mtmp)->parentmid = mtmp->m_id;
+    }
+}
+
+/* this is not currently used */
+void
+free_ebones(struct monst *mtmp)
+{
+    if (mtmp->mextra && EBONES(mtmp)) {
+        free((genericptr_t) EBONES(mtmp));
+        EBONES(mtmp) = (struct ebones *) 0;
+    }
+}
+
+#endif /* SFCTOOL */
 
 /*bones.c*/

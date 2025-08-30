@@ -13,8 +13,8 @@
  * Light sources are "things" that have a physical position and range.
  * They have a type, which gives us information about them.  Currently
  * they are only attached to objects and monsters.  Note well:  the
- * polymorphed-player handling assumes that both gy.youmonst.m_id and
- * gy.youmonst.mx will always remain 0.
+ * polymorphed-player handling assumes that gy.youmonst.m_id will
+ * always remain 1 and gy.youmonst.mx will always remain 0.
  *
  * Light sources, like timers, either follow game play (RANGE_GLOBAL) or
  * stay on a level (RANGE_LEVEL).  Light sources are unique by their
@@ -38,15 +38,18 @@
  */
 
 /* flags */
-#define LSF_SHOW 0x1        /* display the light source */
-#define LSF_NEEDS_FIXUP 0x2 /* need oid fixup */
+#define LSF_SHOW 0x1            /* display the light source */
+#define LSF_NEEDS_FIXUP 0x2     /* need oid fixup */
+#define LSF_IS_PROBLEMATIC 0x4  /* impossible situation encountered */
 
+#ifndef SFCTOOL
 staticfn light_source *new_light_core(coordxy, coordxy,
                                     int, int, anything *) NONNULLPTRS;
 staticfn void delete_ls(light_source *);
 staticfn void discard_flashes(void);
 staticfn void write_ls(NHFILE *, light_source *);
 staticfn int maybe_write_ls(NHFILE *, int, boolean);
+staticfn unsigned whereis_mon(struct monst *, unsigned);
 
 /* imported from vision.c, for small circles */
 extern const coordxy circle_data[];
@@ -374,7 +377,7 @@ find_mid(unsigned nid, unsigned fmflags)
 {
     struct monst *mtmp;
 
-    if (!nid)
+    if ((fmflags & FM_YOU) && nid == 1)
         return &gy.youmonst;
     if (fmflags & FM_FMON)
         for (mtmp = fmon; mtmp; mtmp = mtmp->nmon)
@@ -391,6 +394,28 @@ find_mid(unsigned nid, unsigned fmflags)
     return (struct monst *) 0;
 }
 
+staticfn unsigned
+whereis_mon(struct monst *mon, unsigned fmflags)
+{
+    struct monst *mtmp;
+
+    if ((fmflags & FM_YOU) && mon == &gy.youmonst)
+        return FM_YOU;
+    if (fmflags & FM_FMON)
+        for (mtmp = fmon; mtmp; mtmp = mtmp->nmon)
+            if (mtmp == mon)
+                return FM_FMON;
+    if (fmflags & FM_MIGRATE)
+        for (mtmp = gm.migrating_mons; mtmp; mtmp = mtmp->nmon)
+            if (mtmp == mon)
+                return FM_MIGRATE;
+    if (fmflags & FM_MYDOGS)
+        for (mtmp = gm.mydogs; mtmp; mtmp = mtmp->nmon)
+            if (mtmp == mon)
+                return FM_MYDOGS;
+    return 0;
+}
+
 /* Save all light sources of the given range. */
 void
 save_light_sources(NHFILE *nhfp, int range)
@@ -405,11 +430,9 @@ save_light_sources(NHFILE *nhfp, int range)
     discard_flashes();
     gv.vision_full_recalc = 0;
 
-    if (perform_bwrite(nhfp)) {
+    if (update_file(nhfp)) {
         count = maybe_write_ls(nhfp, range, FALSE);
-        if (nhfp->structlevel) {
-            bwrite(nhfp->fd, (genericptr_t) &count, sizeof count);
-        }
+        Sfo_int(nhfp, &count, "lightsource-count");
         actual = maybe_write_ls(nhfp, range, TRUE);
         if (actual != count)
             panic("counted %d light sources, wrote %d! [range=%d]", count,
@@ -446,6 +469,7 @@ save_light_sources(NHFILE *nhfp, int range)
         }
     }
 }
+#endif /* !SFCTOOL */
 
 /*
  * Pull in the structures from disk, but don't recalculate the object
@@ -458,17 +482,17 @@ restore_light_sources(NHFILE *nhfp)
     light_source *ls;
 
     /* restore elements */
-    if (nhfp->structlevel)
-        mread(nhfp->fd, (genericptr_t) &count, sizeof count);
+    Sfi_int(nhfp, &count, "lightsource-count");
 
     while (count-- > 0) {
         ls = (light_source *) alloc(sizeof(light_source));
-        if (nhfp->structlevel)
-            mread(nhfp->fd, (genericptr_t) ls, sizeof(light_source));
+        Sfi_ls_t(nhfp, ls, "lightsource");
         ls->next = gl.light_base;
         gl.light_base = ls;
     }
 }
+
+#ifndef SFCTOOL
 
 DISABLE_WARNING_FORMAT_NONLITERAL
 
@@ -615,8 +639,7 @@ write_ls(NHFILE *nhfp, light_source *ls)
 
     if (ls->type == LS_OBJECT || ls->type == LS_MONSTER) {
         if (ls->flags & LSF_NEEDS_FIXUP) {
-            if (nhfp->structlevel)
-                bwrite(nhfp->fd, (genericptr_t) ls, sizeof(light_source));
+            Sfo_ls_t(nhfp, ls, "lightsource");
         } else {
             /* replace object pointer with id for write, then put back */
             arg_save = ls->id;
@@ -624,22 +647,54 @@ write_ls(NHFILE *nhfp, light_source *ls)
                 otmp = ls->id.a_obj;
                 ls->id = cg.zeroany;
                 ls->id.a_uint = otmp->o_id;
-                if (find_oid((unsigned) ls->id.a_uint) != otmp)
+                if (find_oid((unsigned) ls->id.a_uint) != otmp) {
                     impossible("write_ls: can't find obj #%u!",
                                ls->id.a_uint);
+                    ls->flags |= LSF_IS_PROBLEMATIC;
+                }
             } else { /* ls->type == LS_MONSTER */
+                unsigned monloc = 0;
+
                 mtmp = (struct monst *) ls->id.a_monst;
-                ls->id = cg.zeroany;
-                ls->id.a_uint = mtmp->m_id;
-                if (find_mid((unsigned) ls->id.a_uint, FM_EVERYWHERE) != mtmp)
-                    impossible("write_ls: can't find mon #%u!",
-                               ls->id.a_uint);
+
+                /* The monster pointer has been stashed in the light source
+                 * for a while and while there is code meant to clean-up the
+                 * light source aspects if a monster goes away, there have
+                 * been some reports of light source issues, such as when
+                 * going to the planes.
+                 *
+                 * Verify that the stashed monst pointer is still present
+                 * in one of the monster chains before pulling subfield
+                 * values such as m_id from it, to avoid any attempt to
+                 * pull random m_id value from (now) freed memory.
+                 *
+                 * find_mid() disregards a DEADMONSTER, but whereis_mon()
+                 * does not. */
+
+                if ((monloc = whereis_mon(mtmp, FM_EVERYWHERE)) != 0) {
+                    ls->id = cg.zeroany;
+                    ls->id.a_uint = mtmp->m_id;
+                    if (find_mid((unsigned) ls->id.a_uint, monloc) != mtmp) {
+                        impossible("write_ls: can't find mon%s #%u!",
+                                   DEADMONSTER(mtmp) ? " because it's dead"
+                                                     : "",
+                                   ls->id.a_uint);
+                        ls->flags |= LSF_IS_PROBLEMATIC;
+                    }
+                } else {
+                    impossible(
+                        "write_ls: stashed monst ptr not in any chain");
+                    ls->flags |= LSF_IS_PROBLEMATIC;
+                }
+            }
+            if (ls->flags & LSF_IS_PROBLEMATIC) {
+                /* TODO: cleanup this ls, or skip writing it */
             }
             ls->flags |= LSF_NEEDS_FIXUP;
-            if (nhfp->structlevel)
-                bwrite(nhfp->fd, (genericptr_t) ls, sizeof(light_source));
+            Sfo_ls_t(nhfp, ls, "lightsource");
             ls->id = arg_save;
             ls->flags &= ~LSF_NEEDS_FIXUP;
+            ls->flags &= ~LSF_IS_PROBLEMATIC;
         }
     } else {
         impossible("write_ls: bad type (%d)", ls->type);
@@ -918,11 +973,10 @@ wiz_light_sources(void)
 
     return ECMD_OK;
 }
-
+#endif /* !SFCTOOL */
 /* for 'onefile' processing where end of this file isn't necessarily the
    end of the source code seen by the compiler */
 #undef LSF_SHOW
 #undef LSF_NEEDS_FIXUP
 #undef mon_is_local
-
 /*light.c*/

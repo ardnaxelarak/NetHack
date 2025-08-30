@@ -13,6 +13,7 @@
 
 #include "win10.h"
 #include "winos.h"
+#include <ShlObj.h>
 
 #define NEED_VARARGS
 #include "hack.h"
@@ -20,7 +21,6 @@
 #ifndef __BORLANDC__
 #include <direct.h>
 #endif
-#include <ctype.h>
 #ifdef TTY_GRAPHICS
 #include "wintty.h"
 #endif
@@ -28,6 +28,7 @@
 
 #ifdef WIN32
 #include <VersionHelpers.h>
+#include <UserEnv.h>
 
 /*
  * The following WIN32 API routines are used in this file.
@@ -41,6 +42,12 @@
  *
  */
 
+static char portable_device_path[MAX_PATH];
+
+static boolean path_buffer_set = FALSE;
+static char path_buffer[MAX_PATH];
+
+#ifndef SFCTOOL
 /* runtime cursor display control switch */
 boolean win32_cursorblink;
 
@@ -50,13 +57,17 @@ WIN32_FIND_DATA ffd;
 extern int GUILaunched;
 extern boolean getreturn_enabled;
 int redirect_stdout;
+static char *get_executable_path(void);
+
+
 
 #ifdef WIN32CON
 typedef HWND(WINAPI *GETCONSOLEWINDOW)(void);
-#ifdef WIN32CON
+#if 0
 static HWND GetConsoleHandle(void);
 static HWND GetConsoleHwnd(void);
-#endif
+#endif /* 0 */
+#endif /* WIN32CON */
 #if !defined(TTY_GRAPHICS)
 extern void backsp(void);
 #endif
@@ -68,7 +79,17 @@ unsigned long sys_random_seed(void);
 static int max_filename(void);
 #endif
 
-
+int get_known_folder_path(const KNOWNFOLDERID *folder_id, char *path,
+                          size_t path_size);
+void create_directory(const char *path);
+int build_known_folder_path(const KNOWNFOLDERID *folder_id, char *path,
+                            size_t path_size, boolean versioned);
+void build_environment_path(const char *env_str, const char *folder,
+                            char *path, size_t path_size);
+boolean folder_file_exists(const char *folder, const char *file_name);
+boolean test_portable_config(const char *executable_path,
+                             char *portable_device_path,
+                             size_t portable_device_path_size);
 /* The function pointer nt_kbhit contains a kbhit() equivalent
  * which varies depending on which window port is active.
  * For the tty port it is tty_kbhit() [from consoletty.c]
@@ -78,7 +99,6 @@ static int max_filename(void);
 
 int def_kbhit(void);
 int (*nt_kbhit)(void) = def_kbhit;
-#endif /* WIN32CON */
 
 #ifndef WIN32CON
 /* this is used as a printf() replacement when the window
@@ -92,7 +112,7 @@ VA_DECL(const char *, fmt)
     VA_END();
     return;
 }
-#endif
+#endif  /* WIN32CON */
 
 char
 switchar(void)
@@ -232,8 +252,10 @@ VA_DECL(const char *, s)
     VA_START(s);
     VA_INIT(s, const char *);
     /* error() may get called before tty is initialized */
+#ifdef TTY_GRAPHICS
     if (iflags.window_inited)
-        end_screen();
+        term_end_screen();
+#endif
     if (WINDOWPORT(tty)) {
         buf[0] = '\n';
         (void) vsnprintf(&buf[1], sizeof buf - (1 + sizeof "\n"), s, VA_ARGS);
@@ -328,6 +350,7 @@ interject_assistance(int num, int interjection_type, genericptr_t ptr1, genericp
         }
     } break;
     }
+    nhUse(interjection_type);
 }
 
 void
@@ -412,16 +435,19 @@ void port_insert_pastebuf(char *buf)
 }
 
 #ifdef WIN32CON
+#if 0
 static HWND
 GetConsoleHandle(void)
 {
     HMODULE hMod = GetModuleHandle("kernel32.dll");
-    GETCONSOLEWINDOW pfnGetConsoleWindow =
-        (GETCONSOLEWINDOW) GetProcAddress(hMod, "GetConsoleWindow");
-    if (pfnGetConsoleWindow)
-        return pfnGetConsoleWindow();
-    else
-        return GetConsoleHwnd();
+
+    if (hMod) {
+        GETCONSOLEWINDOW pfnGetConsoleWindow =
+            (GETCONSOLEWINDOW) GetProcAddress(hMod, "GetConsoleWindow");
+        if (pfnGetConsoleWindow)
+            return pfnGetConsoleWindow();
+    }
+    return GetConsoleHwnd();
 }
 
 static HWND
@@ -434,7 +460,7 @@ GetConsoleHwnd(void)
     /* Get current window title */
     GetConsoleTitle(OldTitle, sizeof OldTitle);
 
-    (void) sprintf(NewTitle, "NETHACK%ld/%ld", GetTickCount(),
+    (void) sprintf(NewTitle, "NETHACK%lld/%ld", GetTickCount64(),
                    GetCurrentProcessId());
     SetConsoleTitle(NewTitle);
 
@@ -449,8 +475,9 @@ GetConsoleHwnd(void)
     /*       printf("%d iterations\n", iterations); */
     return hwndFound;
 }
+#endif /* 0 */
 #endif /* WIN32CON */
-#endif
+#endif /* RUNTIME_PASTEBUF_SUPPORT */
 
 #ifdef RUNTIME_PORT_ID
 /*
@@ -481,6 +508,10 @@ get_port_id(char *buf)
 }
 #endif /* RUNTIME_PORT_ID */
 
+#ifdef MSWIN_GRAPHICS
+extern void free_winmain_stuff(void);
+#endif
+
 void
 nethack_exit(int code)
 {
@@ -504,6 +535,11 @@ nethack_exit(int code)
         if (iflags.window_inited)
             wait_synch();
     }
+    /* frees some status tracking data */
+    genl_status_finish();
+#ifdef MSWIN_GRAPHICS
+    free_winmain_stuff();
+#endif
     exit(code);
 }
 
@@ -682,25 +718,6 @@ windows_early_options(const char *window_opt)
     return 0;
 }
 
-/*
- * Add a backslash to any name not ending in /, \ or : There must
- * be room for the \
- */
-void
-append_slash(char *name)
-{
-    char *ptr;
-
-    if (!*name)
-        return;
-    ptr = name + (strlen(name) - 1);
-    if (*ptr != '\\' && *ptr != '/' && *ptr != ':') {
-        *++ptr = '\\';
-        *++ptr = '\0';
-    }
-    return;
-}
-
 #include <bcrypt.h>     /* Windows Crypto Next Gen (CNG) */
 
 #ifndef STATUS_SUCCESS
@@ -737,7 +754,7 @@ sys_random_seed(void)
         time_t datetime = 0;
         const char *emsg;
 
-        if (status == STATUS_NOT_FOUND)
+        if (status == (NTSTATUS) STATUS_NOT_FOUND)
             emsg = "BCRYPT_RNG_ALGORITHM not avail, falling back";
         else
             emsg = "Other failure than algorithm not avail";
@@ -770,7 +787,370 @@ nt_assert_failed(const char *expression, const char *filepath, int line)
     impossible("nhassert(%s) failed in file '%s' at line %d",
                 expression, filename, line);
 }
+#endif  /* SFCTOOL */
 
+/* used by util/sfctool.c as well as files.c */
+boolean
+get_user_home_folder(char *homebuf, size_t sz)
+{
+    static char szHomeDirBuf[MAX_PATH] = { 0 };
+    // We need a process with query permission set
+    HANDLE hToken = 0;
+    DWORD result =
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken);
+    DWORD BufSize = MAX_PATH;
+
+    result = GetUserProfileDirectoryA(hToken, szHomeDirBuf, &BufSize);
+    // Close handle opened via OpenProcessToken
+    CloseHandle(hToken);
+    if (result != 0) {
+        Snprintf(homebuf, sz, "%s", szHomeDirBuf);
+    }
+
+    return (result != 0);
+}
+
+char *
+get_executable_path(void)
+{
+#ifdef UNICODE
+    {
+        TCHAR wbuf[BUFSZ];
+        GetModuleFileName((HANDLE) 0, wbuf, BUFSZ);
+        WideCharToMultiByte(CP_ACP, 0, wbuf, -1, path_buffer,
+                            sizeof(path_buffer), NULL, NULL);
+    }
+#else
+    DWORD length = GetModuleFileName((HANDLE) 0, path_buffer, MAX_PATH);
+    if (length == ERROR_INSUFFICIENT_BUFFER)
+        error("Unable to get module name");
+    path_buffer[length] = '\0';
+#endif
+
+    char *seperator = strrchr(path_buffer, PATH_SEPARATOR);
+    if (seperator)
+        *seperator = '\0';
+
+    path_buffer_set = TRUE;
+    return path_buffer;
+}
+
+char *
+windows_exepath(void)
+{
+    char *p = (char *) 0;
+
+    if (path_buffer_set)
+        p = path_buffer;
+    return p;
+}
+
+char *
+translate_path_variables(const char *str, char *buf)
+{
+    const char *src;
+    char evar[BUFSZ], *dest, *envp, *eptr = (char *) 0;
+    boolean in_evar;
+    size_t ccount, ecount, destcount, slen = str ? strlen(str) : 0;
+
+    if (!slen || !buf) {
+        if (buf)
+            *buf = '\0';
+        return buf;
+    }
+
+    dest = buf;
+    src = str;
+    in_evar = FALSE;
+    destcount = ecount = 0;
+    for (ccount = 0;
+         ccount < slen && destcount < (BUFSZ - 1) && ecount < (BUFSZ - 1);
+         ++ccount, ++src) {
+        if (*src == '%') {
+            if (in_evar) {
+                *eptr = '\0';
+                envp = nh_getenv(evar);
+                if (envp) {
+                    size_t elen = strlen(envp);
+
+                    if ((elen + destcount) < (size_t) (BUFSZ - 1)) {
+                        Strcpy(dest, envp);
+                        dest += elen;
+                        destcount += elen;
+                    }
+                }
+            } else {
+                eptr = evar;
+                ecount = 0;
+            }
+            in_evar = !in_evar;
+            continue;
+        }
+        if (in_evar) {
+            *eptr++ = *src;
+            ecount++;
+        } else {
+            *dest++ = *src;
+            destcount++;
+        }
+    }
+    *dest = '\0';
+    return buf;
+}
+
+DISABLE_WARNING_UNREACHABLE_CODE
+
+int
+get_known_folder_path(const KNOWNFOLDERID *folder_id, char *path,
+                      size_t path_size)
+{
+    PWSTR wide_path;
+    if (FAILED(SHGetKnownFolderPath(folder_id, 0, NULL, &wide_path))) {
+        error("Unable to get known folder path");
+        return FALSE;
+    }
+
+    size_t converted;
+    errno_t err;
+
+    err = wcstombs_s(&converted, path, path_size, wide_path, _TRUNCATE);
+
+    CoTaskMemFree(wide_path);
+
+    if (err == STRUNCATE || err == EILSEQ) {
+        // silently handle this problem
+        return FALSE;
+    } else if (err != 0) {
+        error(
+            "Failed folder (%lu) path string conversion, unexpected err = %d",
+            folder_id->Data1, err);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+void
+create_directory(const char *path)
+{
+    BOOL dres = CreateDirectoryA(path, NULL);
+
+    if (!dres) {
+        DWORD dw = GetLastError();
+
+        if (dw != ERROR_ALREADY_EXISTS)
+            error("Unable to create directory '%s'", path);
+    }
+}
+
+RESTORE_WARNING_UNREACHABLE_CODE
+
+int
+build_known_folder_path(const KNOWNFOLDERID *folder_id, char *path,
+                        size_t path_size, boolean versioned)
+{
+    if (!get_known_folder_path(folder_id, path, path_size))
+        return FALSE;
+
+    strcat(path, "\\NetHack\\");
+    create_directory(path);
+    if (versioned) {
+        Sprintf(eos(path), "%d.%d\\", VERSION_MAJOR, VERSION_MINOR);
+        create_directory(path);
+    }
+    return TRUE;
+}
+
+void
+build_environment_path(const char *env_str, const char *folder, char *path,
+                       size_t path_size)
+{
+    path[0] = '\0';
+
+    const char *root_path = nh_getenv(env_str);
+
+    if (root_path == NULL)
+        return;
+
+    strcpy_s(path, path_size, root_path);
+
+    char *colon = strchr(path, ';');
+    if (colon != NULL)
+        path[0] = '\0';
+
+    if (strlen(path) == 0)
+        return;
+
+    append_slash(path);
+
+    if (folder != NULL) {
+        strcat_s(path, path_size, folder);
+        strcat_s(path, path_size, "\\");
+    }
+}
+
+boolean
+folder_file_exists(const char *folder, const char *file_name)
+{
+    char path[MAX_PATH];
+
+    if (folder[0] == '\0')
+        return FALSE;
+
+    strcpy(path, folder);
+    strcat(path, file_name);
+    return file_exists(path);
+}
+
+boolean
+file_exists(const char *path)
+{
+    struct stat sb;
+
+    /* Just see if it's there */
+    if (stat(path, &sb)) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+void
+set_default_prefix_locations(const char *programPath UNUSED)
+{
+    static char executable_path[MAX_PATH];
+    static char profile_path[MAX_PATH];
+    static char versioned_profile_path[MAX_PATH];
+    static char versioned_user_data_path[MAX_PATH];
+    static char versioned_global_data_path[MAX_PATH];
+    /*    static char versioninfo[20] UNUSED; */
+
+    strcpy(executable_path, get_executable_path());
+    append_slash(executable_path);
+
+#ifndef SFCTOOL
+    if (test_portable_config(executable_path, portable_device_path,
+                             sizeof portable_device_path)) {
+        gf.fqn_prefix[SYSCONFPREFIX] = executable_path;
+        gf.fqn_prefix[CONFIGPREFIX] = portable_device_path;
+        gf.fqn_prefix[HACKPREFIX] = portable_device_path;
+        gf.fqn_prefix[SAVEPREFIX] = portable_device_path;
+        gf.fqn_prefix[LEVELPREFIX] = portable_device_path;
+        gf.fqn_prefix[BONESPREFIX] = portable_device_path;
+        gf.fqn_prefix[SCOREPREFIX] = portable_device_path;
+        gf.fqn_prefix[LOCKPREFIX] = portable_device_path;
+        gf.fqn_prefix[TROUBLEPREFIX] = portable_device_path;
+        gf.fqn_prefix[DATAPREFIX] = executable_path;
+    } else {
+#endif /* SFCTOOL */
+        if (!build_known_folder_path(&FOLDERID_Profile, profile_path,
+                                     sizeof(profile_path), FALSE))
+            strcpy(profile_path, executable_path);
+
+        if (!build_known_folder_path(&FOLDERID_Profile,
+                                     versioned_profile_path,
+                                     sizeof(profile_path), TRUE))
+            strcpy(versioned_profile_path, executable_path);
+
+        if (!build_known_folder_path(&FOLDERID_LocalAppData,
+                                     versioned_user_data_path,
+                                     sizeof(versioned_user_data_path), TRUE))
+            strcpy(versioned_user_data_path, executable_path);
+
+        if (!build_known_folder_path(
+                &FOLDERID_ProgramData, versioned_global_data_path,
+                sizeof(versioned_global_data_path), TRUE))
+            strcpy(versioned_global_data_path, executable_path);
+
+        gf.fqn_prefix[SYSCONFPREFIX] = versioned_global_data_path;
+        gf.fqn_prefix[CONFIGPREFIX] = profile_path;
+        gf.fqn_prefix[HACKPREFIX] = versioned_profile_path;
+        gf.fqn_prefix[SAVEPREFIX] = versioned_user_data_path;
+        gf.fqn_prefix[LEVELPREFIX] = versioned_user_data_path;
+        gf.fqn_prefix[BONESPREFIX] = versioned_global_data_path;
+        gf.fqn_prefix[SCOREPREFIX] = versioned_global_data_path;
+        gf.fqn_prefix[LOCKPREFIX] = versioned_global_data_path;
+        gf.fqn_prefix[TROUBLEPREFIX] = versioned_profile_path;
+        gf.fqn_prefix[DATAPREFIX] = executable_path;
+#ifndef SFCTOOL
+    }
+#endif /* SFCTOOL */
+}
+
+/*
+ * Add a backslash to any name not ending in /, \ or : There must
+ * be room for the \
+ */
+void
+append_slash(char *name)
+{
+    char *ptr;
+
+    if (!*name)
+        return;
+    ptr = name + (strlen(name) - 1);
+    if (*ptr != '\\' && *ptr != '/' && *ptr != ':') {
+        *++ptr = '\\';
+        *++ptr = '\0';
+    }
+    return;
+}
+
+void set_default_prefix_locations(const char *programPath);
+boolean
+test_portable_config(const char *executable_path, char *portable_device_path,
+                     size_t portable_device_path_size)
+{
+    int lth = 0;
+    const char *sysconf = "sysconf";
+    char tmppath[MAX_PATH];
+    boolean retval = FALSE,
+            save_initoptions_noterminate = iflags.initoptions_noterminate;
+
+    if (portable_device_path
+        && folder_file_exists(executable_path, "sysconf")) {
+        /*
+           There is a sysconf file (not just sysconf.template) present in
+           the exe path, which is not the way NetHack is initially
+           distributed, so assume it means that the admin/installer wants to
+           override something, perhaps set up for a fully-portable
+           configuration that leaves no traces behind elsewhere on this
+           computer's hard drive - delve into that...
+         */
+
+        *portable_device_path = '\0';
+        lth = sizeof tmppath - strlen(sysconf);
+        (void) strncpy(tmppath, executable_path, lth - 1);
+        tmppath[lth - 1] = '\0';
+        (void) strcat(tmppath, sysconf);
+
+        iflags.initoptions_noterminate = 1;
+        /* assure_syscf_file(); */
+        config_error_init(TRUE, tmppath, FALSE);
+        /* ... and _must_ parse correctly. */
+        if (read_config_file(tmppath, set_in_sysconf)
+            && sysopt.portable_device_paths)
+            retval = TRUE;
+        (void) config_error_done();
+        iflags.initoptions_noterminate = save_initoptions_noterminate;
+        sysopt_release(); /* the real sysconf processing comes later */
+    }
+    if (retval) {
+        lth = strlen(executable_path);
+        if (lth <= (int) portable_device_path_size - 1)
+            Strcpy(portable_device_path, executable_path);
+        else
+            retval = FALSE;
+    }
+    return retval;
+}
+
+const char *
+get_portable_device(void)
+{
+    return (const char *) portable_device_path;
+}
+
+#ifndef SFCTOOL
 /* Windows helpers for CRASHREPORT etc */
 #ifdef CRASHREPORT
 struct CRctxt {
@@ -785,11 +1165,11 @@ struct CRctxt {
 } ctxp_ = { NULL, NULL, NULL, 0, 0, 0, NULL, 0 };
 struct CRctxt *ctxp = &ctxp_;    // XXX should this now be in gc.* ?
 
-#define win32err(fn) errname = fn; goto error
+#define win32err(fn) errname = (char *) fn; goto error
 
 int
-win32_cr_helper(char cmd, struct CRctxt *ctxp, void *p, int d){
-    char *errname = "unknown";
+win32_cr_helper(char cmd, struct CRctxt *contextp, void *p, int d){
+    char *errname = (char *) "unknown";
     switch (cmd) {
     default:
         /* Not panic - we don't want to upgrade an impossible to a
@@ -804,77 +1184,77 @@ win32_cr_helper(char cmd, struct CRctxt *ctxp, void *p, int d){
         return MessageBoxW(NULL, lbidstr, L"bidshow", MB_SETFOREGROUND);
     }
         break;
-    case 'i': /* HASH_INIT(ctxp) */
+    case 'i': /* HASH_INIT(contextp) */
         if (!IsWindowsVistaOrGreater())
             return 1; // CNG not available.
-        ctxp->bah = NULL;
-        ctxp->bhh = NULL;
-        ctxp->pbhashobj = NULL;
-        ctxp->cbhashobj = 0;
-        ctxp->cbhash = 0;
-        ctxp->cbdata = 0;
-        ctxp->pbhash = NULL;
-        ctxp->st = 0;
+        contextp->bah = NULL;
+        contextp->bhh = NULL;
+        contextp->pbhashobj = NULL;
+        contextp->cbhashobj = 0;
+        contextp->cbhash = 0;
+        contextp->cbdata = 0;
+        contextp->pbhash = NULL;
+        contextp->st = 0;
         // win32err("test");        // TESTING - FAKE AN ERROR
-        if (0 > (ctxp->st = BCryptOpenAlgorithmProvider(
-                     &ctxp->bah, BCRYPT_MD4_ALGORITHM, NULL, 0))) {
+        if (0 > (contextp->st = BCryptOpenAlgorithmProvider(
+                     &contextp->bah, BCRYPT_MD4_ALGORITHM, NULL, 0))) {
             win32err("BCryptOpenAlgorithmProvider");
         };
-        if (0 > (ctxp->st =
-                     BCryptGetProperty(ctxp->bah, BCRYPT_OBJECT_LENGTH,
-                                       (unsigned char *) &ctxp->cbhashobj,
-                                       sizeof(DWORD), &ctxp->cbdata, 0))) {
+        if (0 > (contextp->st =
+                     BCryptGetProperty(contextp->bah, BCRYPT_OBJECT_LENGTH,
+                                       (unsigned char *) &contextp->cbhashobj,
+                                       sizeof(DWORD), &contextp->cbdata, 0))) {
             win32err("BCryptGetProperty1");
         };
         if (0
-            == (ctxp->pbhashobj =
-                    HeapAlloc(GetProcessHeap(), 0, ctxp->cbhashobj))) {
+            == (contextp->pbhashobj =
+                    HeapAlloc(GetProcessHeap(), 0, contextp->cbhashobj))) {
             win32err("HeapAlloc1");
         };
-        if (0 > (ctxp->st = BCryptGetProperty(
-                     ctxp->bah, BCRYPT_HASH_LENGTH, (PBYTE) &ctxp->cbhash,
-                     sizeof(DWORD), &ctxp->cbdata, 0))) {
+        if (0 > (contextp->st = BCryptGetProperty(
+                     contextp->bah, BCRYPT_HASH_LENGTH, (PBYTE) &contextp->cbhash,
+                     sizeof(DWORD), &contextp->cbdata, 0))) {
             win32err("BCryptGetProperty2");
         }
         if (0
-            == (ctxp->pbhash =
-                    HeapAlloc(GetProcessHeap(), 0, ctxp->cbhash))) {
+            == (contextp->pbhash =
+                    HeapAlloc(GetProcessHeap(), 0, contextp->cbhash))) {
 
             win32err("HeapAlloc2\n");
         }
-        if (0 > BCryptCreateHash(ctxp->bah, &ctxp->bhh, ctxp->pbhashobj,
-                                 ctxp->cbhashobj, NULL, 0, 0)) {
+        if (0 > BCryptCreateHash(contextp->bah, &contextp->bhh, contextp->pbhashobj,
+                                 contextp->cbhashobj, NULL, 0, 0)) {
             win32err("BCryptCreateHash");
         }
         break;
-    case 'u':        /* HASH_UPDATE(ctxp, ptr, len) */
-        if (0 > (ctxp->st = BCryptHashData(ctxp->bhh, p, d, 0))) {
+    case 'u':        /* HASH_UPDATE(contextp, ptr, len) */
+        if (0 > (contextp->st = BCryptHashData(contextp->bhh, p, d, 0))) {
             win32err("BCryptHashData");
         }
         break;
-    case 'f':        /* HASH_FINISH(ctxp) */
-        if (0 > BCryptFinishHash(ctxp->bhh, ctxp->pbhash, ctxp->cbhash, 0)) {
+    case 'f':        /* HASH_FINISH(contextp) */
+        if (0 > BCryptFinishHash(contextp->bhh, contextp->pbhash, contextp->cbhash, 0)) {
             win32err("BCryptFinishHash");
         }
         break;
-    case 'c':        /* HASH_CLEANUP(ctxp) */
-        if (ctxp->bah) {
-            BCryptCloseAlgorithmProvider(ctxp->bah, 0);
+    case 'c':        /* HASH_CLEANUP(contextp) */
+        if (contextp->bah) {
+            BCryptCloseAlgorithmProvider(contextp->bah, 0);
         }
-        if (ctxp->bhh) {
-            BCryptDestroyHash(ctxp->bhh);
+        if (contextp->bhh) {
+            BCryptDestroyHash(contextp->bhh);
         }
-        if (ctxp->pbhashobj) {
-            HeapFree(GetProcessHeap(), 0, ctxp->pbhashobj);
+        if (contextp->pbhashobj) {
+            HeapFree(GetProcessHeap(), 0, contextp->pbhashobj);
         }
-        if (ctxp->pbhash) {
-            HeapFree(GetProcessHeap(), 0, ctxp->pbhash);
+        if (contextp->pbhash) {
+            HeapFree(GetProcessHeap(), 0, contextp->pbhash);
         }
         break;
-    case 's':        /* HASH_RESULT_SIZE(ctxp) */
-        return ctxp->cbhash;
-    case 'r':        /* HASH_RESULT(ctxp, resp) */
-        *(unsigned char **)p = ctxp->pbhash;
+    case 's':        /* HASH_RESULT_SIZE(contextp) */
+        return contextp->cbhash;
+    case 'r':        /* HASH_RESULT(contextp, resp) */
+        *(unsigned char **)p = contextp->pbhash;
         break;
     case 'b':        /* HASH_BINFILE(NULL,&binfile,0) */
             // XXX This buffer should be allocated, not static (and freed in
@@ -895,7 +1275,7 @@ win32_cr_helper(char cmd, struct CRctxt *ctxp, void *p, int d){
     return 0;        /* ok */
 error:
     raw_printf("WIN32 function %s failed: status=%" PRIx64 "\n",
-            errname, (uint64)ctxp->st);
+            errname, (uint64)contextp->st);
     return 1;        /* fail */
 }
 #undef win32err
@@ -949,8 +1329,17 @@ printf("E2: M=%s e=%d\n",msg,errnum);
 }
 #endif
 
+#ifdef USE_BACKTRACE
+#define USED_IF_BACKTRACE
+#else
+#define USED_IF_BACKTRACE UNUSED
+#endif
+
 int
-win32_cr_gettrace(int maxframes, char *out, int outsize){
+win32_cr_gettrace(int maxframes USED_IF_BACKTRACE,
+		  char *out USED_IF_BACKTRACE,
+		  int outsize USED_IF_BACKTRACE)
+{
 #ifdef USE_BACKTRACE
     userstate.error_count = 0;
     userstate.good_count = 0;
@@ -1053,6 +1442,7 @@ win32_cr_shellexecute(const char *url){
     return rv;
 }
 #endif /* CRASHREPORT */
+#endif /* SFCTOOL */
 
 #endif /* WIN32 */
 

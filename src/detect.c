@@ -1,4 +1,4 @@
-/* NetHack 3.7	detect.c	$NHDT-Date: 1721684299 2024/07/22 21:38:19 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.180 $ */
+/* NetHack 3.7	detect.c	$NHDT-Date: 1745114235 2025/04/19 17:57:15 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.190 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2018. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -38,6 +38,7 @@ staticfn void foundone(coordxy, coordxy, int);
 staticfn void findone(coordxy, coordxy, genericptr_t);
 staticfn void openone(coordxy, coordxy, genericptr_t);
 staticfn int mfind0(struct monst *, boolean);
+staticfn boolean skip_premap_detect(coordxy, coordxy);
 staticfn int reveal_terrain_getglyph(coordxy, coordxy, unsigned, int,
                                      unsigned);
 
@@ -930,6 +931,8 @@ detect_obj_traps(
                 continue;
         }
         if (Is_box(otmp) && otmp->otrapped) {
+            otmp->tknown = 1;
+            otmp->dknown = 1;
             result |= u_at(x, y) ? OTRAP_HERE : OTRAP_THERE;
             if (ft) {
                 flash_glyph_at(x, y, trapglyph, FOUND_FLASH_COUNT);
@@ -1402,7 +1405,7 @@ show_map_spot(coordxy x, coordxy y, boolean cnf)
     if (!IS_FURNITURE(lev->typ)) {
         if ((t = t_at(x, y)) != 0 && t->tseen) {
             map_trap(t, 1);
-        } else if ((ep = engr_at(x, y)) != 0) {
+        } else if ((ep = engr_at(x, y)) != 0 && !cnf) {
             map_engraving(ep, 1);
         } else if (glyph_is_trap(oldglyph) || glyph_is_object(oldglyph)) {
             show_glyph(x, y, oldglyph);
@@ -1581,7 +1584,7 @@ do_vicinity_map(
         docrt();
 }
 
-/* convert a secret door into a normal door */
+/* convert a secret door into a normal door; it might be trapped */
 void
 cvt_sdoor_to_door(struct rm *lev)
 {
@@ -1597,6 +1600,7 @@ cvt_sdoor_to_door(struct rm *lev)
     }
     lev->typ = DOOR;
     lev->doormask = newmask;
+    lev->arboreal_sdoor = 0; /* clears 'candig' */
 }
 
 /* update the map for something which has just been found by wand of secret
@@ -1649,6 +1653,7 @@ findone(coordxy zx, coordxy zy, genericptr_t whatfound)
 
         flash_glyph_at(zx, zy, cmap_to_glyph(sym), FOUND_FLASH_COUNT);
         cvt_sdoor_to_door(lev); /* set lev->typ = DOOR */
+        recalc_block_point(zx, zy);
         magic_map_background(zx, zy, 0);
         foundone(zx, zy, back_to_glyph(zx, zy));
         found_p->num_sdoors++;
@@ -2038,6 +2043,7 @@ dosearch0(int aflag) /* intrinsic autosearch vs explicit searching */
                     if (rnl(7 - fund))
                         continue;
                     cvt_sdoor_to_door(&levl[x][y]); /* .typ = DOOR */
+                    recalc_block_point(x, y);
                     exercise(A_WIS, TRUE);
                     nomul(0);
                     feel_location(x, y); /* make sure it shows up */
@@ -2113,6 +2119,16 @@ warnreveal(void)
         }
 }
 
+/* skip premap detection of areas outside Sokoban map */
+staticfn boolean
+skip_premap_detect(coordxy x, coordxy y)
+{
+    if ((levl[x][y].typ == STONE)
+        && (levl[x][y].wall_info & (W_NONDIGGABLE | W_NONPASSWALL)) != 0)
+        return TRUE;
+    return FALSE;
+}
+
 /* Pre-map (the sokoban) levels */
 void
 premap_detect(void)
@@ -2124,6 +2140,8 @@ premap_detect(void)
     /* Map the background and boulders */
     for (x = 1; x < COLNO; x++)
         for (y = 0; y < ROWNO; y++) {
+            if (skip_premap_detect(x, y))
+                continue;
             levl[x][y].seenv = SVALL;
             levl[x][y].waslit = TRUE;
             if (levl[x][y].typ == SDOOR)

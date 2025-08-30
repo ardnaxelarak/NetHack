@@ -80,14 +80,8 @@ main(int argc, char *argv[])
             exit(EXIT_SUCCESS);
 
         if (argcheck(argc, argv, ARG_SHOWPATHS) == 2) {
-#ifdef CHDIR
-            chdirx((char *) 0, 0);
-#endif
-            iflags.initoptions_noterminate = TRUE;
-            initoptions();
-            iflags.initoptions_noterminate = FALSE;
-            reveal_paths();
-            exit(EXIT_SUCCESS);
+            gd.deferred_showpaths = TRUE;
+            return 0;
         }
         if (argcheck(argc, argv, ARG_DEBUG) == 1) {
             argc--;

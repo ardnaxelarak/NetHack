@@ -266,6 +266,7 @@ dmgval(struct obj *otmp, struct monst *mon)
         case IRON_CHAIN:
         case CROSSBOW_BOLT:
         case MACE:
+        case SILVER_MACE:
         case WAR_HAMMER:
         case FLAIL:
         case SPETUM:
@@ -310,7 +311,7 @@ dmgval(struct obj *otmp, struct monst *mon)
         int wt = (int) objects[HEAVY_IRON_BALL].oc_weight;
 
         if ((int) otmp->owt > wt) {
-            wt = ((int) otmp->owt - wt) / IRON_BALL_W_INCR;
+            wt = ((int) otmp->owt - wt) / WT_IRON_BALL_INCR;
             tmp += rnd(4 * wt);
             if (tmp > 25)
                 tmp = 25; /* objects[].oc_wldam */
@@ -493,20 +494,38 @@ oselect(struct monst *mtmp, int type)
     return (struct obj *) 0;
 }
 
-/* TODO: have monsters use aklys' throw-and-return */
 static NEARDATA const int rwep[] = {
     DWARVISH_SPEAR, SILVER_SPEAR, ELVEN_SPEAR, SPEAR, ORCISH_SPEAR, JAVELIN,
     SHURIKEN, YA, SILVER_ARROW, ELVEN_ARROW, ARROW, ORCISH_ARROW,
     CROSSBOW_BOLT, SILVER_DAGGER, ELVEN_DAGGER, DAGGER, ORCISH_DAGGER, KNIFE,
-    FLINT, ROCK, LOADSTONE, LUCKSTONE, DART,
-    /* BOOMERANG, */ CREAM_PIE
+    FLINT, ROCK, LOADSTONE, LUCKSTONE, DART, CREAM_PIE,
 };
 
+/* polearms */
 static NEARDATA const int pwep[] = { HALBERD,       BARDICHE, SPETUM,
                                      BILL_GUISARME, VOULGE,   RANSEUR,
                                      GUISARME,      GLAIVE,   LUCERN_HAMMER,
                                      BEC_DE_CORBIN, FAUCHARD, PARTISAN,
                                      LANCE };
+
+#define AKLYS_LIM (BOLT_LIM / 2)
+/* throw-and-return weapons */
+static NEARDATA const struct throw_and_return_weapon arwep[] = {
+    /* { BOOMERANG, 5, 0 }, */
+    { AKLYS, AKLYS_LIM * AKLYS_LIM, 1 },
+};
+
+const struct throw_and_return_weapon *
+autoreturn_weapon(struct obj *otmp)
+{
+    int i;
+
+    for (i = 0; i < SIZE(arwep); i++) {
+        if (otmp->otyp == arwep[i].otyp)
+            return &arwep[i];
+    }
+    return (struct throw_and_return_weapon *) 0;
+}
 
 /* select a ranged weapon for the monster */
 struct obj *
@@ -539,6 +558,11 @@ select_rwep(struct monst *mtmp)
     mweponly = (mwelded(mwep) && mtmp->weapon_check == NO_WEAPON_WANTED);
     if (dist2(mtmp->mx, mtmp->my, mtmp->mux, mtmp->muy) <= 13
         && couldsee(mtmp->mx, mtmp->my)) {
+        if (is_art(mwep, ART_SNICKERSNEE)) {
+            gp.propellor = mwep;
+            return mwep;
+        }
+
         for (i = 0; i < SIZE(pwep); i++) {
             /* Only strong monsters can wield big (esp. long) weapons.
              * Big weapon is basically the same as bimanual.
@@ -557,9 +581,31 @@ select_rwep(struct monst *mtmp)
             }
         }
     }
+    /* Next, try to select a throw-and-return weapon, since they are
+     * also not as expendable. Again, don't pick one if monster's
+     * weapon is welded.
+     */
+    for (i = 0; i < SIZE(arwep); i++) {
+        const struct throw_and_return_weapon *arw = &arwep[i];
+
+        if (!mindless(mtmp->data) && !is_animal(mtmp->data) && !mweponly
+            && dist2(mtmp->mx, mtmp->my, mtmp->mux, mtmp->muy) <= arw->range
+            && couldsee(mtmp->mx, mtmp->my)) {
+            if ((((mtmp->misc_worn_check & W_ARMS) == 0)
+                 || !objects[arw->otyp].oc_bimanual)
+                && (objects[arw->otyp].oc_material != SILVER
+                    || !mon_hates_silver(mtmp))) {
+                if ((otmp = oselect(mtmp, arw->otyp)) != 0
+                    && (otmp == mwep || !mweponly)) {
+                    gp.propellor = otmp; /* force the monster to wield it */
+                    return otmp;
+                }
+            }
+        }
+    }
 
     /*
-     * other than these two specific cases, always select the
+     * other than the specific cases above, always select the
      * most potent ranged weapon to hand.
      */
     for (i = 0; i < SIZE(rwep); i++) {
@@ -646,8 +692,8 @@ static const NEARDATA short hwep[] = {
     TSURUGI, RUNESWORD, DWARVISH_MATTOCK, TWO_HANDED_SWORD, BATTLE_AXE,
     KATANA, UNICORN_HORN, CRYSKNIFE, TRIDENT, LONG_SWORD, ELVEN_BROADSWORD,
     BROADSWORD, SCIMITAR, SILVER_SABER, MORNING_STAR, ELVEN_SHORT_SWORD,
-    DWARVISH_SHORT_SWORD, SHORT_SWORD, ORCISH_SHORT_SWORD, MACE, AXE,
-    DWARVISH_SPEAR, SILVER_SPEAR, ELVEN_SPEAR, SPEAR, ORCISH_SPEAR, FLAIL,
+    DWARVISH_SHORT_SWORD, SHORT_SWORD, ORCISH_SHORT_SWORD, SILVER_MACE, MACE,
+    AXE, DWARVISH_SPEAR, SILVER_SPEAR, ELVEN_SPEAR, SPEAR, ORCISH_SPEAR, FLAIL,
     BULLWHIP, QUARTERSTAFF, JAVELIN, AKLYS, CLUB, PICK_AXE, RUBBER_HOSE,
     WAR_HAMMER, SILVER_DAGGER, ELVEN_DAGGER, DAGGER, ORCISH_DAGGER, ATHAME,
     SCALPEL, KNIFE, WORM_TOOTH
@@ -716,7 +762,7 @@ possibly_unwield(struct monst *mon, boolean polyspot)
         mon->weapon_check = NO_WEAPON_WANTED;
         /* if we're going to call distant_name(), do so before extract_self */
         if (cansee(mon->mx, mon->my)) {
-            pline("%s drops %s.", Monnam(mon), distant_name(obj, doname));
+            pline_mon(mon, "%s drops %s.", Monnam(mon), distant_name(obj, doname));
             newsym(mon->mx, mon->my);
         }
         obj_extract_self(obj);
@@ -827,7 +873,7 @@ mon_wield_item(struct monst *mon)
                     pline("%s cannot wield that %s.", mon_nam(mon),
                           xname(obj));
                 } else {
-                    pline("%s tries to wield %s.", Monnam(mon), doname(obj));
+                    pline_mon(mon, "%s tries to wield %s.", Monnam(mon), doname(obj));
                     pline("%s %s!", Yname2(mw_tmp), welded_buf);
                 }
                 mw_tmp->bknown = 1;
@@ -840,10 +886,15 @@ mon_wield_item(struct monst *mon)
         mon->weapon_check = NEED_WEAPON;
         if (canseemon(mon)) {
             boolean newly_welded;
+            const struct throw_and_return_weapon *arw;
 
             pline_mon(mon, "%s wields %s%c",
                       Monnam(mon), doname(obj),
                       exclaim ? '!' : '.');
+            if ((arw = autoreturn_weapon(obj)) != 0 && arw->tethered != 0)
+                pline_mon(mon, "%s secures the tether on %s.", Monnam(mon),
+                          the(xname(obj)));
+
             /* 3.6.3: mwelded() predicate expects the object to have its
                W_WEP bit set in owormmask, but the pline here and for
                artifact_light don't want that because they'd have '(weapon
@@ -1466,7 +1517,9 @@ weapon_hit_bonus(struct obj *weapon)
     } else if (type <= P_LAST_WEAPON) {
         switch (P_SKILL(type)) {
         default:
-            impossible(bad_skill, P_SKILL(type)); /* fall through */
+            impossible(bad_skill, P_SKILL(type));
+            FALLTHROUGH;
+            /* FALLTHRU */
         case P_ISRESTRICTED:
         case P_UNSKILLED:
             bonus = -4;
@@ -1487,7 +1540,9 @@ weapon_hit_bonus(struct obj *weapon)
             skill = P_SKILL(wep_type);
         switch (skill) {
         default:
-            impossible(bad_skill, skill); /* fall through */
+            impossible(bad_skill, skill);
+            FALLTHROUGH;
+            /* FALLTHRU */
         case P_ISRESTRICTED:
         case P_UNSKILLED:
             bonus = -9;
@@ -1561,7 +1616,8 @@ weapon_dam_bonus(struct obj *weapon)
         switch (P_SKILL(type)) {
         default:
             impossible("weapon_dam_bonus: bad skill %d", P_SKILL(type));
-        /* fall through */
+            FALLTHROUGH;
+        /* FALLTHRU */
         case P_ISRESTRICTED:
         case P_UNSKILLED:
             bonus = -2;
@@ -1729,5 +1785,20 @@ setmnotwielded(struct monst *mon, struct obj *obj)
         MON_NOWEP(mon);
     obj->owornmask &= ~W_WEP;
 }
+
+#undef PN_BARE_HANDED
+#undef PN_RIDING
+#undef PN_POLEARMS
+#undef PN_SABER
+#undef PN_HAMMER
+#undef PN_WHIP
+#undef PN_ATTACK_SPELL
+#undef PN_HEALING_SPELL
+#undef PN_DIVINATION_SPELL
+#undef PN_ENCHANTMENT_SPELL
+#undef PN_CLERIC_SPELL
+#undef PN_ESCAPE_SPELL
+#undef PN_MATTER_SPELL
+#undef AKLYS_LIM
 
 /*weapon.c*/

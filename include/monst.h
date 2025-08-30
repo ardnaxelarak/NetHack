@@ -1,4 +1,4 @@
-/* NetHack 3.7	monst.h	$NHDT-Date: 1678560511 2023/03/11 18:48:31 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.54 $ */
+/* NetHack 3.7	monst.h	$NHDT-Date: 1738640524 2025/02/03 19:42:04 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.67 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2016. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -99,12 +99,12 @@ struct monst {
     short mnum;           /* permanent monster index number */
     short cham;           /* if shapeshifter, orig mons[] idx goes here */
     short movement;       /* movement points (derived from permonst definition
-                             and added effects */
+                           * and added effects */
     uchar m_lev;          /* adjusted difficulty level of monster */
     aligntyp malign;      /* alignment of this monster, relative to the
-                             player (positive = good to kill) */
+                           * player (positive = good to kill) */
     coordxy mx, my;
-    coordxy mux, muy;       /* where the monster thinks you are */
+    coordxy mux, muy;     /* where the monster thinks you are */
 #define MTSZ 4
     /* mtrack[0..2] is used to keep extra data when migrating the monster */
     coord mtrack[MTSZ];   /* monster track */
@@ -112,11 +112,11 @@ struct monst {
     unsigned mappearance; /* for undetected mimics and the wiz */
     uchar m_ap_type;      /* what mappearance is describing, m_ap_types */
 
-    schar mtame;                /* level of tameness, implies peaceful */
+    schar mtame;          /* level of tameness, implies peaceful */
     unsigned short mintrinsics; /* low 8 correspond to mresists */
     unsigned short mextrinsics; /* low 8 correspond to mresists */
     unsigned long seen_resistance; /* M_SEEN_x; saw you resist an effect */
-    int mspec_used;             /* monster's special ability attack timeout */
+    int mspec_used;       /* monster's special ability attack timeout */
 
     Bitfield(female, 1);      /* is female */
     Bitfield(minvis, 1);      /* currently invisible */
@@ -156,13 +156,12 @@ struct monst {
     Bitfield(ispriest, 1);  /* is an aligned priest or high priest */
 
     Bitfield(iswiz, 1);     /* is the Wizard of Yendor */
+#define MAX_NUM_WORMS 32    /* should be 2^(wormno bitfield size) */
     Bitfield(wormno, 5);    /* at most 31 worms on any level */
     Bitfield(mtemplit, 1);  /* temporarily seen; only valid during bhit() */
     Bitfield(meverseen, 1); /* mon has been seen at some point */
 
     Bitfield(mspotted, 1);  /* mon is currently seen by hero */
-
-#define MAX_NUM_WORMS 32    /* should be 2^(wormno bitfield size) */
 
     unsigned long mstrategy; /* for monsters with mflag3: current strategy */
 #ifdef NHSTDC
@@ -180,12 +179,10 @@ struct monst {
 #define STRAT_PLAYER    0x01000000L
 #define STRAT_NONE      0x00000000L
 #define STRAT_STRATMASK 0x0f000000L
-#define STRAT_XMASK     0x00ff0000L
-#define STRAT_YMASK     0x0000ff00L
+    /* mstrategy unused 0x00ffff00L */
 #define STRAT_GOAL      0x000000ffL
-#define STRAT_GOALX(s) ((coordxy) ((s & STRAT_XMASK) >> 16))
-#define STRAT_GOALY(s) ((coordxy) ((s & STRAT_YMASK) >> 8))
 
+    coord mgoal;           /* monster strategy, target location */
     long mtrapseen;        /* bitmap of traps we've been trapped in */
     long mlstmv;           /* for catching up with lost time */
     long mstate;           /* debugging info on monsters stored here */
@@ -268,22 +265,15 @@ struct monst {
 #endif
 #define mon_resistancebits(mon) \
     ((mon)->data->mresists | (mon)->mextrinsics | (mon)->mintrinsics)
-#define resists_fire(mon) \
-    ((mon_resistancebits(mon) & MR_FIRE) != 0)
-#define resists_cold(mon) \
-    ((mon_resistancebits(mon) & MR_COLD) != 0)
-#define resists_sleep(mon) \
-    ((mon_resistancebits(mon) & MR_SLEEP) != 0)
-#define resists_disint(mon) \
-    ((mon_resistancebits(mon) & MR_DISINT) != 0)
-#define resists_elec(mon) \
-    ((mon_resistancebits(mon) & MR_ELEC) != 0)
-#define resists_poison(mon) \
-    ((mon_resistancebits(mon) & MR_POISON) != 0)
-#define resists_acid(mon) \
-    ((mon_resistancebits(mon) & MR_ACID) != 0)
-#define resists_ston(mon) \
-    ((mon_resistancebits(mon) & MR_STONE) != 0)
+#define resists_fire(mon)   Resists_Elem(mon, FIRE_RES)
+#define resists_cold(mon)   Resists_Elem(mon, COLD_RES)
+#define resists_sleep(mon)  Resists_Elem(mon, SLEEP_RES)
+#define resists_disint(mon) Resists_Elem(mon, DISINT_RES)
+#define resists_elec(mon)   Resists_Elem(mon, SHOCK_RES)
+#define resists_poison(mon) Resists_Elem(mon, POISON_RES)
+#define resists_acid(mon)   Resists_Elem(mon, ACID_RES)
+#define resists_ston(mon)   Resists_Elem(mon, STONE_RES)
+
 #define is_lminion(mon) \
     (is_minion((mon)->data) && mon_aligntyp(mon) == A_LAWFUL)
 

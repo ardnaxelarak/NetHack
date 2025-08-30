@@ -1,5 +1,5 @@
 /* NetHack 3.7	recover.c	$NHDT-Date: 1687547437 2023/06/23 19:10:37 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.33 $ */
-/*	Copyright (c) Janet Walz, 1992.				  */
+/* Copyright (c) Janet Walz, 1992.                                */
 /* NetHack may be freely redistributed.  See license for details. */
 
 /*
@@ -12,7 +12,16 @@
 #include "win32api.h"
 #endif
 
+#define RECOVER_C
+
 #include "config.h"
+#include "hacklib.h"
+
+#include "artifact.h"
+#include "rect.h"
+#include "dungeon.h"
+#include "hack.h"
+
 #if !defined(O_WRONLY) && !defined(LSC) && !defined(AZTEC_C)
 #include <fcntl.h>
 #endif
@@ -26,12 +35,15 @@ extern int vms_open(const char *, int, unsigned);
 #define nhUse(arg) (void)(arg)
 #endif
 
+/* copy_bytes() has been moved to hacklib */
+
 int restore_savefile(char *);
 void set_levelfile_name(int);
 int open_levelfile(int);
 int create_savefile(void);
-void copy_bytes(int, int);
-static void store_formatindicator(int);
+
+extern int get_critical_size_count(void);
+extern uchar cscbuf[];
 
 #ifndef WIN_CE
 #define Fprintf (void) fprintf
@@ -194,37 +206,19 @@ create_savefile(void)
     return fd;
 }
 
-void
-copy_bytes(int ifd, int ofd)
-{
-    char buf[BUFSIZ];
-    int nfrom, nto;
-
-    do {
-        nfrom = read(ifd, buf, BUFSIZ);
-        nto = write(ofd, buf, nfrom);
-        if (nto != nfrom) {
-            Fprintf(stderr, "file copy failed!\n");
-            exit(EXIT_FAILURE);
-        }
-    } while (nfrom == BUFSIZ);
-}
-
 int
 restore_savefile(char *basename)
 {
     int gfd, lfd, sfd;
-    int res = 0, lev, savelev, hpid, pltmpsiz, filecmc;
+    int res = 0, lev, savelev, hpid, pltmpsiz;
     xint8 levc;
     struct version_info version_data;
-    struct savefile_info sfi;
-    char plbuf[PL_NSIZ], indicator;
+    char plbuf[PL_NSIZ_PLUS], indicator, cscsize;
 
     /* level 0 file contains:
      *  pid of creating process (ignored here)
      *  level number for current level of save file
      *  name of save file nethack would have created
-     *  savefile info
      *  player name
      *  and game state
      */
@@ -265,13 +259,14 @@ restore_savefile(char *basename)
          != sizeof savename)
         || (read(gfd, (genericptr_t) &indicator, sizeof indicator)
             != sizeof indicator)
-        || (read(gfd, (genericptr_t) &filecmc, sizeof filecmc)
-            != sizeof filecmc)
+        || (read(gfd, (genericptr_t) &cscsize, sizeof cscsize)
+            != sizeof cscsize)
+        || (read(gfd, (genericptr_t) &cscbuf, cscsize)
+            != cscsize)
         || (read(gfd, (genericptr_t) &version_data, sizeof version_data)
             != sizeof version_data)
-        || (read(gfd, (genericptr_t) &sfi, sizeof sfi) != sizeof sfi)
         || (read(gfd, (genericptr_t) &pltmpsiz, sizeof pltmpsiz)
-            != sizeof pltmpsiz) || (pltmpsiz > PL_NSIZ)
+            != sizeof pltmpsiz) || (pltmpsiz > PL_NSIZ_PLUS)
         || (read(gfd, (genericptr_t) plbuf, pltmpsiz) != pltmpsiz)) {
         Fprintf(stderr, "Error reading %s -- can't recover.\n", lock);
         Close(gfd);
@@ -279,10 +274,12 @@ restore_savefile(char *basename)
     }
 
     /* save file should contain:
-     *  format indicator and cmc
+     *  format indicator (1 byte)
+     *  n = count of critical size list (1 byte)
+     *  n bytes of critical sizes (n bytes)
      *  version info
-     *  savefile info
-     *  player name
+     *  plnametmp = player name size (int, 2 bytes)
+     *  player name (PL_NSIZ_PLUS)
      *  current level (including pets)
      *  (non-level-based) game state
      *  other levels
@@ -302,20 +299,35 @@ restore_savefile(char *basename)
         return -1;
     }
 
-    store_formatindicator(sfd);
-    if (write(sfd, (genericptr_t) &version_data, sizeof version_data)
-        != sizeof version_data) {
-        Fprintf(stderr, "Error writing %s; recovery failed.\n", savename);
+    if (write(sfd, (genericptr_t) &indicator, sizeof indicator)
+        != sizeof indicator) {
+        Fprintf(stderr, "Error writing %s %s; recovery failed.\n",
+                savename, "indicator");
         Close(gfd);
         Close(sfd);
         Close(lfd);
         return -1;
     }
-
-    if (write(sfd, (genericptr_t) &sfi, sizeof sfi) != sizeof sfi) {
-        Fprintf(stderr,
-                "Error writing %s; recovery failed (savefile_info).\n",
-                savename);
+    if (write(sfd, (genericptr_t) &cscsize, sizeof cscsize) != sizeof cscsize) {
+        Fprintf(stderr, "Error writing %s %s; recovery failed.\n",
+                savename, "cscsize");
+        Close(gfd);
+        Close(sfd);
+        Close(lfd);
+        return -1;
+    }
+    if (write(sfd, (genericptr_t) &cscbuf, cscsize) != cscsize) {
+        Fprintf(stderr, "Error writing %s %s; recovery failed.\n",
+                savename, "critical bytes");
+        Close(gfd);
+        Close(sfd);
+        Close(lfd);
+        return -1;
+    }
+    if (write(sfd, (genericptr_t) &version_data, sizeof version_data)
+        != sizeof version_data) {
+        Fprintf(stderr, "Error writing %s %s; recovery failed.\n",
+                savename, "version_data");
         Close(gfd);
         Close(sfd);
         Close(lfd);
@@ -333,6 +345,7 @@ restore_savefile(char *basename)
         return -1;
     }
 
+    assert((size_t) pltmpsiz <= sizeof plbuf);
     if (write(sfd, (genericptr_t) plbuf, pltmpsiz) != pltmpsiz) {
         Fprintf(stderr, "Error writing %s; recovery failed (player name).\n",
                 savename);
@@ -342,11 +355,17 @@ restore_savefile(char *basename)
         return -1;
     }
 
-    copy_bytes(lfd, sfd);
+    if (!copy_bytes(lfd, sfd)) {
+        Fprintf(stderr, "file copy failed!\n");
+        exit(EXIT_FAILURE);
+    }
     Close(lfd);
     (void) unlink(lock);
 
-    copy_bytes(gfd, sfd);
+    if (!copy_bytes(gfd, sfd)) {
+        Fprintf(stderr, "file copy failed!\n");
+        exit(EXIT_FAILURE);
+    }
     Close(gfd);
     set_levelfile_name(0);
     (void) unlink(lock);
@@ -361,10 +380,14 @@ restore_savefile(char *basename)
                 /* any or all of these may not exist */
                 levc = (xint8) lev;
                 if (write(sfd, (genericptr_t) &levc, sizeof levc)
-                    != sizeof levc)
+                    != sizeof levc) {
                     res = -1;
-                else
-                    copy_bytes(lfd, sfd);
+                } else {
+                    if (!copy_bytes(lfd, sfd)) {
+                        Fprintf(stderr, "file copy failed!\n");
+                        exit(EXIT_FAILURE);
+                    }
+                }
                 Close(lfd);
                 (void) unlink(lock);
             }
@@ -386,7 +409,10 @@ restore_savefile(char *basename)
         in = open("NetHack:default.icon", O_RDONLY);
         out = open(iconfile, O_WRONLY | O_TRUNC | O_CREAT);
         if (in > -1 && out > -1) {
-            copy_bytes(in, out);
+            if (!copy_bytes(in, out)) {
+                Fprintf(stderr, "file copy failed!\n");
+                exit(EXIT_FAILURE);
+            }
         }
         if (in > -1)
             close(in);
@@ -397,18 +423,6 @@ restore_savefile(char *basename)
 #endif
     return res;
 }
-
-static void
-store_formatindicator(int fd)
-{
-    char indicate = 'h';      /* historical */
-    int cmc = 0;
-
-    write(fd, (genericptr_t) &indicate, sizeof indicate);
-    write(fd, (genericptr_t) &cmc, sizeof cmc);
-}
-
-
 
 #ifdef EXEPATH
 #ifdef __DJGPP__

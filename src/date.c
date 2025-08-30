@@ -29,12 +29,10 @@ struct nomakedefs_s nomakedefs = {
     "Version 1.0, built Jul 28 13:18:57 1987.",
     (const char *) 0,   /* git_sha */
     (const char *) 0,   /* git_branch */
-    (const char *) 0,	/* git_prefix */
+    (const char *) 0,   /* git_prefix */
     "1.0.0-0",
     "NetHack Version 1.0.0-0 - last build Tue Jul 28 13:18:57 1987.",
     0x01010000UL,
-    0x00000000UL,
-    0x00000000UL,
     0x00000000UL,
     0x00000000UL,
     0x00000000UL,
@@ -113,8 +111,6 @@ populate_nomakedefs(struct version_info *version)
     nomakedefs.version_features = version->feature_set;
     nomakedefs.ignored_features = md_ignored_features();
     nomakedefs.version_sanity1 = version->entity_count;
-    nomakedefs.version_sanity2 = version->struct_sizes1;
-    nomakedefs.version_sanity3 = version->struct_sizes2;
     nomakedefs.version_string = dupstr(mdlib_version_string(tmpbuf2, "."));
     nomakedefs.version_id = dupstr(
            version_id_string(tmpbuf2, sizeof tmpbuf2, nomakedefs.build_date));

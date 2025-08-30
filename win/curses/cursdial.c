@@ -11,7 +11,6 @@
 #include "cursmisc.h"
 #include "cursdial.h"
 #include "func_tab.h"
-#include <ctype.h>
 
 #if defined(FILENAME_CMP) && !defined(strcasecmp)
 #define strcasecmp FILENAME_CMP
@@ -61,6 +60,7 @@ typedef struct nhm {
     unsigned long mbehavior;    /* menu flags */
     boolean reuse_accels;       /* Non-unique accelerators per page */
     boolean bottom_heavy;       /* display multi-page menu starting at end */
+    boolean show_obj_syms;      /* handle iflags.menuobjsyms */
     struct nhm *prev_menu;      /* Pointer to previous menu */
     struct nhm *next_menu;      /* Pointer to next menu */
 } nhmenu;
@@ -308,6 +308,7 @@ curses_character_input_dialog(
         answer = curses_read_char();
 #endif
         if (answer == ERR) {
+            iflags.term_gone = 1;
             answer = def;
             break;
         }
@@ -450,8 +451,9 @@ curses_ext_cmd(void)
         letter = pgetchar(); /* pgetchar(cmd.c) implements do-again */
         curs_set(0);
         prompt_width = (int) strlen(cur_choice);
-        matches = 0;
 
+        if (letter == ERR)
+            iflags.term_gone = 1;
         if (letter == '\033' || letter == ERR) {
             ret = -1;
             break;
@@ -554,6 +556,7 @@ curses_create_nhmenu(winid wid, unsigned long mbehavior)
         new_menu->mbehavior = mbehavior;
         new_menu->reuse_accels = FALSE;
         new_menu->bottom_heavy = FALSE;
+        new_menu->show_obj_syms = FALSE;
         return;
     }
 
@@ -567,6 +570,7 @@ curses_create_nhmenu(winid wid, unsigned long mbehavior)
     new_menu->mbehavior = mbehavior;
     new_menu->reuse_accels = FALSE;
     new_menu->bottom_heavy = FALSE;
+    new_menu->show_obj_syms = FALSE;
     new_menu->next_menu = NULL;
 
     if (nhmenus == NULL) {      /* no menus in memory yet */
@@ -668,7 +672,7 @@ curs_pad_menu(
     boolean do_pad UNUSED)
 {
     nhmenu_item *menu_item_ptr;
-    int numpages = current_menu->num_pages;
+    int numpages;
 
     /* caller has already called menu_win_size() */
     menu_determine_pages(current_menu); /* sets 'menu->num_pages' */
@@ -943,7 +947,7 @@ menu_is_multipage(nhmenu *menu, int width, int height)
     int curline = 0, accel_per_page = 0;
     nhmenu_item *menu_item_ptr = menu->entries;
 
-    if (*menu->prompt) {
+    if (menu->prompt && *menu->prompt) {
         curline += curses_num_lines(menu->prompt, width) + 1;
     }
 
@@ -979,13 +983,12 @@ menu_determine_pages(nhmenu *menu)
     int tmpline, num_lines, accel_per_page;
     int curline = 0;
     int page_num = 1;
-    nhmenu_item *menu_item_ptr = menu->entries;
+    nhmenu_item *menu_item_ptr;
     int width = menu->width;
     int height = menu->height;
     int page_end = height;
 
-
-    if (*menu->prompt) {
+    if (menu->prompt && *menu->prompt) {
         curline += curses_num_lines(menu->prompt, width) + 1;
     }
     tmpline = curline;
@@ -1032,7 +1035,20 @@ menu_win_size(nhmenu *menu)
     int maxentrywidth = 0;
     int maxheaderwidth = menu->prompt ? (int) strlen(menu->prompt) : 0;
     nhmenu_item *menu_item_ptr, *last_item_ptr = NULL;
+    boolean only_if_no_headers = (iflags.menuobjsyms & 4) != 0;
 
+    /* check entire menu rather than one page at a time */
+    menu->show_obj_syms = iflags.use_menu_glyphs;
+    if (only_if_no_headers) {
+        for (menu_item_ptr = menu->entries; menu_item_ptr != NULL;
+             menu_item_ptr = menu_item_ptr->next_item)
+            if (menu_item_ptr->identifier.a_void == 0) {
+                menu->show_obj_syms = FALSE;
+                break;
+            }
+    }
+
+#if 0   /* maxwidth is set below, so the value calculated here isn't used */
     if (program_state.gameover) {
         /* for final inventory disclosure, use full width */
         maxwidth = term_cols - 2; /* +2: borders assumed */
@@ -1047,6 +1063,7 @@ menu_win_size(nhmenu *menu)
         if ((term_cols / 2) > maxwidth)
             maxwidth = (term_cols / 2); /* Half the screen */
     }
+#endif
     maxheight = menu_max_height();
 
     /* First, determine the width of the longest menu entry */
@@ -1061,11 +1078,9 @@ menu_win_size(nhmenu *menu)
         } else {
             /* Add space for accelerator (selector letter) */
             curentrywidth += 4;
-#if 0 /* FIXME: menu glyphs */
             if (menu_item_ptr->glyphinfo.glyph != NO_GLYPH
-                && iflags.use_menu_glyphs)
+                && menu->show_obj_syms)
                 curentrywidth += 2;
-#endif
         }
         if (curentrywidth > maxentrywidth) {
             maxentrywidth = curentrywidth;
@@ -1284,19 +1299,17 @@ menu_display_page(
             entry_cols -= 4;
             start_col += 4;
         }
-#if 0
-        /* FIXME: menuglyphs not implemented yet */
         if (menu_item_ptr->glyphinfo.glyph != NO_GLYPH
-            && iflags.use_menu_glyphs) {
-            color = (int) menu_item_ptr->glyphinfo.color;
+            && menu->show_obj_syms) {
+            color = menu_item_ptr->glyphinfo.gm.sym.color;
             curses_toggle_color_attr(win, color, NONE, ON);
-            mvwaddch(win, menu_item_ptr->line_num + 1, start_col, curletter);
+            mvwaddch(win, menu_item_ptr->line_num + 1, start_col,
+                     menu_item_ptr->glyphinfo.ttychar);
             curses_toggle_color_attr(win, color, NONE, OFF);
             mvwaddch(win, menu_item_ptr->line_num + 1, start_col + 1, ' ');
             entry_cols -= 2;
             start_col += 2;
         }
-#endif
 	color = menu_item_ptr->color;
         if (color == NO_COLOR)
             color = NONE;
@@ -1476,8 +1489,6 @@ curs_nonselect_menu_action(
             }
             menu_item_ptr = menu_item_ptr->next_item;
         }
-
-        menu_item_ptr = menu->entries;
         break;
     } /* case MENU_SEARCH */
     default:
@@ -1501,7 +1512,7 @@ menu_get_selections(WINDOW *win, nhmenu *menu, int how)
     int num_selected = 0;
     boolean dismiss = FALSE;
     char selectors[256], groupaccels[256];
-    nhmenu_item *menu_item_ptr = menu->entries;
+    nhmenu_item *menu_item_ptr;
 
     activemenu = win;
     menu_display_page(win, menu, curpage, selectors, groupaccels);
@@ -1510,6 +1521,7 @@ menu_get_selections(WINDOW *win, nhmenu *menu, int how)
         curletter = curses_getch();
 
         if (curletter == ERR) {
+            iflags.term_gone = 1;
             num_selected = -1;
             dismiss = TRUE;
         }
@@ -1556,6 +1568,7 @@ menu_get_selections(WINDOW *win, nhmenu *menu, int how)
                     break;
                 }
             }
+            FALLTHROUGH;
             /*FALLTHRU*/
         default:
             if (curletter > 0 && curletter < 256

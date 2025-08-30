@@ -1,5 +1,5 @@
 # NetHack 3.7	data.base
-# $NHDT-Date: 1684001509 2023/05/13 18:11:49 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.106 $
+# $NHDT-Date: 1737609388 2025/01/22 21:16:28 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.141 $
 #	Copyright (c) 1994, 1995, 1996 by the NetHack Development Team
 #	Copyright (c) 1994 by Boudewijn Wayers
 #	NetHack may be freely redistributed.  See license for details.
@@ -2056,6 +2056,16 @@ genetic engineer
 	immediate mutations in the subject.  Far from needing an
 	elaborate laboratory to accomplish such abominations, a mere
 	touch seems to be all that is necessary.
+		[]
+
+	"I thought the whole point of genetic engineering was to avoid
+	the random waste of natural evolution, and replace it with
+	the efficiency of reason," Miles piped up.  All three haut-
+	women turned to stare at him in astonishment, as if a potted
+	plant had suddenly offered a critique of its fertilization
+	routine.  "Or ... so it seems to me," Miles trailed off in
+	a much smaller voice.
+		[ Cetaganda, Lois McMaster Bujold ]
 geryon
 	Forthwith that image vile of fraud appear'd,
 	His head and upper part expos'd on land,
@@ -2395,7 +2405,6 @@ hell hound*
 ~helm of *
 ~crystal helmet
 helm*
-dented pot
 * helmet
 	A piece of armor designed to protect the head.
 	(What were you expecting?)
@@ -5230,6 +5239,7 @@ squeaky board
 	additionally gives the wielder the power of regeneration.
 	When invoked it performs healing magic.
 stair*
+branch stair*
 	Up he went -- very quickly at first -- then more slowly -- then
 	in a little while even more slowly than that -- and finally,
 	after many minutes of climbing up the endless stairway, one

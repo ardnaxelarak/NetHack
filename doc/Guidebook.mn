@@ -1,4 +1,4 @@
-.\" $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.574 $ $NHDT-Date: 1711040379 2024/03/21 16:59:39 $
+.\" $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.598 $ $NHDT-Date: 1745139202 2025/04/20 00:53:22 $
 .\"
 .\" This is an excerpt from the 'roff' man page from the 'groff' package.
 .\"+--
@@ -46,8 +46,8 @@
 .ds vr NetHack 3.7.0
 .ds f0 \*(vr
 .ds f1 \" empty
-.\"DO NOT REMOVE NH_DATESUB .ds f2 DATE(%B %-d, %Y)
-.ds f2 September 13, 2024
+.\"DO NOT REMOVE NH_DATESUB .ds f2 Date(%B %-d, %Y)
+.ds f2 May 1, 2025
 .
 .\" A note on some special characters:
 .\" \(lq = left double quote
@@ -2920,8 +2920,16 @@ magic spells on them).
 .pg
 One of the most useful of these is the \fIscroll of identify\fP, which
 can be used to determine what another object is, whether it is cursed or
-blessed, and how many uses it has left.  Some objects of subtle
-enchantment are difficult to identify without these.
+blessed, and how many uses it has left.
+Some objects of subtle enchantment are difficult to identify without these.
+.pg
+A scroll whose label is known can be read even when the hero is blind.
+If a scroll has been discovered, it will be listed in inventory by type
+rather than by label, but the label is known in that situtaion even though
+it isn't shown.
+.pg
+Many scrolls produce a different effect from usual if they are blessed or
+cursed, or read while the hero is confused.
 .pg
 A mail daemon may run up and deliver mail to you as a
 \fIscroll of mail\fP (on versions compiled with this feature).
@@ -3780,7 +3788,8 @@ See
 .op role
 for a description of how to use negation to exclude choices.
 .lp ""
-Default is random.
+If \f(CRalign\fP is not specified, there is no default value;
+player will be prompted unless role and/or race forces a choice for alignment.
 Cannot be set with the \(oq\f(CRO\fP\(cq command.
 Persistent.
 .lp autodescribe
@@ -4006,7 +4015,8 @@ See
 .op role
 for a description of how to use negation to exclude choices.
 .lp ""
-Default is random.
+If \f(CRgender\fP is not specified, there is no default value;
+player will be prompted unless role and/or race forces a choice for gender.
 Cannot be set with the \(oq\f(CRO\fP\(cq command.
 Persistent.
 .lp "goldX   "
@@ -4161,8 +4171,38 @@ Default \(oq|\(cq.
 Key to go to the next menu page.
 Default \(oq>\(cq.
 .lp menu_objsyms
-Show object symbols in menu headings in menus where
-the object symbols act as menu accelerators (default off).
+." [originally menu_objsyms was a boolean]
+." Show object symbols in menu headings in menus where
+." the object symbols act as menu accelerators (default off).
+Inventory and other object menus are normally separated by object class
+(weapons, armor, and so forth), with a menu header line at the beginning
+of each group.
+You can have menus add the display symbol for the class of objects for
+each header line.
+You can also add the display symbol for the individual item in each menu
+entry.
+For a tiles map, that would be a small rendition of an object's tile.
+For a text map, it is the same character as is used for the object's
+class, which would be most useful when there are no headers separating
+objects among classes.
+Possible values are
+.PS "5\ -\ One-or-other"
+.PL "0\ -\ None"
+no symbols for either header lines or menu entries;
+.PL "1\ -\ Headers"
+show symbols on header lines but not entries;
+.PL "2\ -\ Entries"
+show symbols on menu entry lines but not headers;
+.PL "3\ -\ Both"
+show symbols on headers and entries;
+.PL "4\ -\ Conditional"
+only show symbols for entries if there are no headers;
+.PL "5\ -\ One-or-other"
+show symbols on headers, or on entries if no headers.
+.PE
+Supported by tty and curses.
+When setting the value, it can be specified by digit or keyword.
+The default value is \f(CRConditional\fP (4).
 .lp menu_overlay
 Do not clear the screen before drawing menus, and align
 menus to the right edge of the screen. Only for the tty port.
@@ -4246,6 +4286,11 @@ the role (that is, by suffixing one of
 If
 .op "\-@"
 is used for the role, then a random one will be automatically chosen.
+.lp ""
+On some systems, the default is the player's user name;
+on others, there is no default and the player will be prompted.
+The former can made to behave like the latter by specifying a generic name
+such as ``player''.
 Cannot be set with the \(oq\f(CRO\fP\(cq command.
 .lp "news    "
 Read the NetHack news file, if present (default on).
@@ -4506,7 +4551,8 @@ See
 .op role
 for a description of how to use negation to exclude choices.
 .lp ""
-Default is random.
+If \f(CRrace\fP is not specified, there is no default value;
+player will be prompted unless role forces a choice for race.
 Cannot be set with the \(oq\f(CRO\fP\(cq command.
 Persistent.
 .lp rest_on_space
@@ -4542,7 +4588,8 @@ option if they're all negations.
 .\" Only one positive value is allowed, and if present, it overrides any
 .\" negations.
 .lp ""
-Default is \f(CRrandom\fP.
+If \f(CRrole\fP is not specified, there is no default value;
+player will be prompted.
 Cannot be set with the \(oq\f(CRO\fP\(cq command.
 Persistent.
 .lp roguesymset
@@ -6064,22 +6111,12 @@ escape command (!).  The syntax is the same as WIZARDS.
 EXPLORERS\ =\ A list of users who are allowed to use the explore mode.
 The syntax is the same as WIZARDS.
 .lp
+MSGHANDLER\ =\ A path and filename of executable.  Whenever a message-window
+message is shown, NetHack runs this program.  The program will get
+the message as the only parameter.
+.lp
 MAXPLAYERS\ =\ Limit the maximum number of games that can be running
 at the same time.
-.lp
-SAVEFORMAT\ =\ A list of up to two save file formats separated by space. 
-The first format in the list will written as well as read. The second format 
-will be read only if no save file in the first format exists.
-Valid choices are \(lqhistorical\(rq for binary writing of entire structs, 
-\(lqlendian\(rq for binary writing of each field in little-endian order,
-\(lqascii\(rq for writing the save file content in ascii text.
-.lp
-BONESFORMAT\ =\ A list of up to two bones file formats separated by space. 
-The first format in the list will written as well as read. The second format 
-will be read only if no bones files in the first format exist.
-Valid choices are \(lqhistorical\(rq for binary writing of entire structs, 
-\(lqlendian\(rq for binary writing of each field in little-endian order,
-\(lqascii\(rq for writing the bones file content in ascii text.
 .lp
 SUPPORT\ =\ A string explaining how to get local support (no default value).
 .lp

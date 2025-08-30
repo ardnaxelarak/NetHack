@@ -1,11 +1,10 @@
-/* NetHack 3.7	attrib.c	$NHDT-Date: 1726168587 2024/09/12 19:16:27 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.129 $ */
+/* NetHack 3.7	attrib.c	$NHDT-Date: 1754979443 2025/08/11 22:17:23 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.134 $ */
 /*      Copyright 1988, 1989, 1990, 1992, M. Stephenson           */
 /* NetHack may be freely redistributed.  See license for details. */
 
 /*  attribute modification routines. */
 
 #include "hack.h"
-#include <ctype.h>
 
 /* part of the output on gain or loss of attribute */
 static const char
@@ -702,7 +701,9 @@ init_attr_role_redist(int np, boolean addition)
     while ((addition ? (np > 0) : (np < 0)) && tryct < 100) {
         int i = rnd_attr();
 
-        if (i >= A_MAX || ABASE(i) >= ATTRMAX(i)) {
+        if (i >= A_MAX
+            || (addition ? (ABASE(i) >= ATTRMAX(i))
+                         : (ABASE(i) <= ATTRMIN(i)))) {
             tryct++;
             continue;
         }
@@ -889,7 +890,8 @@ is_innate(int propidx)
            ignore innateness if equipment is going to claim responsibility */
         && !u.uprops[propidx].extrinsic)
         return FROM_ROLE;
-    if (propidx == BLINDED && !haseyes(gy.youmonst.data))
+    if ((propidx == BLINDED && !haseyes(gy.youmonst.data))
+        || (propidx == BLND_RES && (HBlnd_resist & FROMFORM) != 0))
         return FROM_FORM;
     return FROM_NONE;
 }
@@ -897,7 +899,8 @@ is_innate(int propidx)
 DISABLE_WARNING_FORMAT_NONLITERAL
 
 char *
-from_what(int propidx) /* special cases can have negative values */
+from_what(
+    int propidx) /* special cases can have negative values */
 {
     static char buf[BUFSZ];
 
@@ -939,7 +942,7 @@ from_what(int propidx) /* special cases can have negative values */
             else if (innateness == FROM_LYCN)
                 Strcpy(buf, " due to your lycanthropy");
             else if (innateness == FROM_FORM)
-                Strcpy(buf, " from current creature form");
+                Strcpy(buf, " from your creature form");
             else if (propidx == FAST && Very_fast)
                 Sprintf(buf, because_of,
                         ((HFast & TIMEOUT) != 0L) ? "a potion or spell"

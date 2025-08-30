@@ -259,21 +259,23 @@
 # ifdef CRASHREPORT
 #  undef CRASHREPORT
 # endif
-# ifdef MSDOS
+# if defined(MSDOS) || defined(NOPANICTRACE)
 #  undef PANICTRACE
 # endif
 #endif
 
 #ifdef CRASHREPORT
 # ifndef DUMPLOG_CORE
-#  define DUMPLOG_CORE	    // required to get ^P info
+#  define DUMPLOG_CORE     // required to get ^P info
 # endif
 # ifdef MACOS
 #  define PANICTRACE
 # endif
 # ifdef __linux__
 #  define PANICTRACE
-#  define NOSTATICFN
+#  ifndef NOSTATICFN       // may be defined on command line
+#   define NOSTATICFN
+#  endif
 # endif
 // This test isn't quite right: CNG is only available from Windows 2000 on.
 // But we'll check that at runtime.
@@ -396,38 +398,6 @@
 #endif
 
 /*
- *      Internal Compression Options
- *
- *      Internal compression options RLECOMP and ZEROCOMP alter the data
- *      that gets written to the save file by NetHack, in contrast
- *      to COMPRESS or ZLIB_COMP which compress the entire file after
- *      the NetHack data is written out.
- *
- *      Defining RLECOMP builds in support for internal run-length
- *      compression of level structures. If RLECOMP support is included
- *      it can be toggled on/off at runtime via the config file option
- *      rlecomp.
- *
- *      Defining ZEROCOMP builds in support for internal zero-comp
- *      compression of data. If ZEROCOMP support is included it can still
- *      be toggled on/off at runtime via the config file option zerocomp.
- *
- *      RLECOMP and ZEROCOMP support can be included even if
- *      COMPRESS or ZLIB_COMP support is included. One reason for doing
- *      so would be to provide savefile read compatibility with a savefile
- *      where those options were in effect. With RLECOMP and/or ZEROCOMP
- *      defined, NetHack can read an rlecomp or zerocomp savefile in, yet
- *      re-save without them.
- *
- *      Using any compression option will create smaller bones/level/save
- *      files at the cost of additional code and time.
- */
-
-/* # define INTERNAL_COMP */ /* defines both ZEROCOMP and RLECOMP */
-/* # define ZEROCOMP      */ /* Support ZEROCOMP compression */
-/* # define RLECOMP       */ /* Support RLECOMP compression  */
-
-/*
  *      Data librarian.  Defining DLB places most of the support files into
  *      a tar-like file, thus making a neater installation.  See *conf.h
  *      for detailed configuration.
@@ -463,7 +433,7 @@
  */
 #define INSURANCE /* allow crashed game recovery */
 
-#ifndef MAC
+#if !defined(MAC) && !defined(SHIM_GRAPHICS)
 #define CHDIR /* delete if no chdir() available */
 #endif
 
@@ -629,23 +599,16 @@ typedef unsigned char uchar;
  * glyph" code, then the escape codes for color and the glyph character
  * itself, and then the "end glyph" code.
  *
- * To compile NetHack with this, add tile.c to WINSRC and tile.o to WINOBJ
- * in the hints file or Makefile.
- * Set boolean option vt_tiledata and/or vt_sounddata in your config file
- * to turn either of these on.
- * Note that gnome-terminal at least doesn't work with this. */
+ * To compile NetHack with this, add tile.c to WINSRC and tile.o to WINOBJ in
+ * the hints file or Makefile.  Set boolean option vt_tiledata and/or
+ * vt_sounddata in your config file to turn either of these on.  Note that some
+ * terminals (e.g. old versions of gnome-terminal) don't work with this. */
 /* #define TTY_TILES_ESCCODES */
 /* #define TTY_SOUND_ESCCODES */
 
 /* An experimental minimalist inventory list capability under tty if you have
  * at least 28 additional rows beneath the status window on your terminal  */
 /* #define TTY_PERM_INVENT */
-
-/* NetHack will execute an external program whenever a new message-window
- * message is shown.  The program to execute is given in environment variable
- * NETHACK_MSGHANDLER.  It will get the message as the only parameter.
- * Only available with POSIX_TYPES, GNU C, or WIN32 */
-/* #define MSGHANDLER */
 
 /* enable status highlighting via STATUS_HILITE directives in run-time
    config file and the 'statushilites' option */

@@ -167,6 +167,8 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(ascii_map, Advanced, 0, opt_in, set_in_game,
                 ascii_map_Def, Yes, No, No, NoAlias, &iflags.wc_ascii_map,
            Term_False, "show map as text")
+    NHOPTO("autocompletions", Advanced, o_autocomplete, BUFSZ, opt_in, set_in_game,
+                No, Yes, No, NoAlias, "edit autocompletions")
     NHOPTB(autodescribe, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.autodescribe, Term_False,
            "describe terrain under cursor")
@@ -440,9 +442,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
                 No, Yes, No, No, NoAlias, "jump to the last page in a menu")
     NHOPTC(menu_next_page, Advanced, 4, opt_in, set_in_config,
                 No, Yes, No, No, NoAlias, "go to the next menu page")
-    NHOPTB(menu_objsyms, Advanced, 0, opt_in, set_in_game,
-                Off, Yes, No, No, NoAlias, &iflags.menu_head_objsym,
-           Term_False, "show object symbols in menus")
+    NHOPTC(menu_objsyms, Advanced, 12, opt_in, set_in_game,
+           Yes, Yes, No, Yes, "use_menu_glyphs",
+           "show object symbols in menus")
 #ifdef TTY_GRAPHICS
     NHOPTB(menu_overlay, Advanced, 0, opt_in, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.menu_overlay, Term_False,

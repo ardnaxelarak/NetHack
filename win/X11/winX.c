@@ -100,7 +100,18 @@ int click_x, click_y, click_button; /* Click position on a map window
 int updated_inventory; /* used to indicate perm_invent updating */
 color_attr X11_menu_promptstyle = { NO_COLOR, ATR_NONE };
 
-static void X11_error_handler(String) NORETURN;
+/* X11/Intrinsic.h prototype has an issue if [[NORETURN]] is used
+ * rather than the old __attribute((noreturn)) under c23 */
+#if defined(__GNUC__) || defined(__clang__)
+#define USE_GNUC_PROTO
+#endif
+
+#ifdef USE_GNUC_PROTO
+static void X11_error_handler(String) __attribute__((noreturn));
+#else
+ATTRNORETURN static XtErrorHandler X11_error_handler(String);
+#endif
+
 static int X11_io_error_handler(Display *);
 
 static int (*old_error_handler)(Display *, XErrorEvent *);
@@ -146,8 +157,6 @@ struct window_procs X11_procs = {
 #ifdef CHANGE_COLOR /* only a Mac option currently */
     donull, donull,
 #endif
-    /* other defs that really should go away (they're tty specific) */
-    X11_start_screen, X11_end_screen,
 #ifdef GRAPHIC_TOMBSTONE
     X11_outrip,
 #else
@@ -177,7 +186,7 @@ static void X11_sig_cb(XtPointer, XtSignalId *);
 #endif
 static void d_timeout(XtPointer, XtIntervalId *);
 static void X11_hangup(Widget, XEvent *, String *, Cardinal *);
-static void X11_bail(const char *) NORETURN;
+ATTRNORETURN static void X11_bail(const char *) NORETURN;
 static void askname_delete(Widget, XEvent *, String *, Cardinal *);
 static void askname_done(Widget, XtPointer, XtPointer);
 static void done_button(Widget, XtPointer, XtPointer);
@@ -993,7 +1002,8 @@ X11_putstr(winid window, int attr, const char *str)
         X11_destroy_nhwindow(window);
         *wp = window_list[new_win];
         window_list[new_win].type = NHW_NONE; /* allow re-use */
-        /* fall through */
+        FALLTHROUGH;
+        /*FALLTHRU*/
     case NHW_TEXT:
         add_to_text_window(wp, attr, str);
         break;
@@ -1393,20 +1403,6 @@ X11_number_pad(int state) /* called from options.c */
 {
     nhUse(state);
 
-    return;
-}
-
-/* called from setftty() in unixtty.c */
-void
-X11_start_screen(void)
-{
-    return;
-}
-
-/* called from settty() in unixtty.c */
-void
-X11_end_screen(void)
-{
     return;
 }
 
