@@ -162,6 +162,9 @@ struct monst {
     Bitfield(meverseen, 1); /* mon has been seen at some point */
 
     Bitfield(mspotted, 1);  /* mon is currently seen by hero */
+    Bitfield(mwandexp, 1);  /* mon has experience with wands */
+    Bitfield(mgenmklev, 1); /* made by the level generation */
+    /* 5 spare bits */
 
     unsigned long mstrategy; /* for monsters with mflag3: current strategy */
 #ifdef NHSTDC

@@ -54,8 +54,8 @@ struct objclass {
                                      * otherwise, obj->dknown and obj->bknown
                                      * tell all, and obj->known should always
                                      * be set for proper merging behavior. */
-    Bitfield(oc_pre_discovered, 1); /* already known at start of game; flagged
-                                     * as such when discoveries are listed */
+    Bitfield(oc_encountered, 1);    /* hero has observed such an item at least
+                                       once (perhaps without naming it) */
     Bitfield(oc_magic, 1);          /* inherently magical object */
     Bitfield(oc_charged, 1);        /* may have +n or (n) charges */
     Bitfield(oc_unique, 1);         /* special one-of-a-kind object */
@@ -76,9 +76,9 @@ struct objclass {
 #define IMMEDIATE 2 /* directional beam that doesn't ricochet */
 #define RAY       3 /* beam that does bounce off walls */
     /* overloaded oc_dir: strike mode bit mask for weapons and weptools */
-#define PIERCE   01 /* pointed weapon punctures target */
-#define SLASH    02 /* sharp weapon cuts target */
-#define WHACK    04 /* blunt weapon bashes target */
+#define PIERCE    1 /* pointed weapon punctures target */
+#define SLASH     2 /* sharp weapon cuts target */
+#define WHACK     4 /* blunt weapon bashes target */
     Bitfield(oc_material, 5); /* one of obj_material_types */
 
     schar oc_subtyp;
@@ -91,7 +91,7 @@ struct objclass {
     uchar oc_color; /* color of the object */
 
     short oc_prob;            /* probability, used in mkobj() */
-    unsigned short oc_weight; /* encumbrance (1 cn = 0.1 lb.) */
+    unsigned oc_weight;       /* encumbrance (1 cn = 0.1 lb.) */
     short oc_cost;            /* base cost in shops */
     /* Check the AD&D rules!  The FIRST is small monster damage. */
     /* for weapons, and tools, rocks, and gems useful as weapons */
@@ -104,6 +104,11 @@ struct objclass {
 #define oc_level oc_oc2 /* books: spell level */
 
     unsigned short oc_nutrition; /* food value */
+
+    unsigned long oc_sell_minseen;
+    unsigned long oc_sell_maxseen;
+    unsigned long oc_buy_minseen;
+    unsigned long oc_buy_maxseen;
 };
 
 struct class_sym {
@@ -146,7 +151,7 @@ enum objclass_syms {
 /* for mkobj() use ONLY! odd '-SPBOOK_CLASS' is in case of unsigned enums */
 #define SPBOOK_no_NOVEL (0 - (int) SPBOOK_CLASS)
 
-#define BURNING_OIL (MAXOCLASSES + 1) /* Can be used as input to explode.   */
+#define BURNING_OIL (MAXOCLASSES + 1) /* Can be used as input to explode    */
 #define MON_EXPLODE (MAXOCLASSES + 2) /* Exploding monster (e.g. gas spore) */
 #define TRAP_EXPLODE (MAXOCLASSES + 3)
 

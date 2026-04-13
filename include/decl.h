@@ -240,6 +240,7 @@ struct instance_globals_c {
     /* decl.c */
     char chosen_windowtype[WINTYPELEN];
     int cmd_key; /* parse() / rhack() */
+    struct Cmd_bind *cmd_bind;
     cmdcount_nht command_count;
     /* some objects need special handling during destruction or placement */
     struct obj *current_wand;  /* wand currently zapped/applied */
@@ -475,6 +476,7 @@ struct instance_globals_i {
     /* invent.c */
     char *invbuf;
     unsigned invbufsiz;
+    boolean item_action_in_progress;
     int in_sync_perminvent;
 
     /* mon.c */
@@ -723,7 +725,8 @@ struct instance_globals_o {
 
     /* options.c */
 
-    int opt_phase; /* builtin_opt, syscf_, rc_file_, environ_, play_opt */
+    /* builtin_opt, syscf_, rc_file_, environ_, play_opt */
+    enum option_phases opt_phase;
     boolean opt_initial;
     boolean opt_from_file;
     boolean opt_need_redraw; /* for doset() */
@@ -836,6 +839,9 @@ struct instance_globals_r {
 };
 
 struct instance_globals_s {
+
+    /* allmain.c */
+    boolean saving_grace_turn; /* saving grace was triggered this turn */
 
     /* artifact.c */
     int spec_dbon_applies; /* coordinate effects from spec_dbon() with
@@ -967,6 +973,9 @@ struct instance_globals_t {
 };
 
 struct instance_globals_u {
+
+    /* allmain.c */
+    int uhp_at_start_of_monster_turn;
 
     /* botl.c */
     boolean update_all;

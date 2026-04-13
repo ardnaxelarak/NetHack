@@ -104,7 +104,7 @@ USE_LUADLL = Y
 WANT_LUAC = N
 
 ifndef LUA_VERSION
-LUAVER=5.4.6
+LUAVER=5.4.8
 else
 LUAVER=$(LUA_VERSION)
 endif
@@ -299,6 +299,18 @@ USE_DLB = Y
 #==========================================
 #==========================================
 
+ifeq "$(MSYSTEM)" "MINGW32"
+arch = x86
+else
+arch = x64
+endif
+MACH := $(shell echo $$PROCESSOR_IDENTIFIER | cut -f1 -d ' ')
+MACH := $(strip $(MACH))
+# Print the detected architecture (for debugging)
+#$(info Detected Architecture:$(MACH).)
+ifeq "$(MACH)" "ARMv8"
+arch=arm64
+endif
 ifdef CI_COMPILER
 cc = gcc -c
 cxx = g++ -c
@@ -311,15 +323,16 @@ ld = gcc
 endif
 ifeq "$(MSYSTEM)" "MINGW32"
 rc = windres --target=pe-i386
-else # MINGW64
+else # MINGW64 or arm64
+ifeq "$(arch)" "arm64"
+#rc = windres --target=pe-arm64
+rc = windres
+else
 rc = windres --target=pe-x86-64
 endif
-
-ifeq "$(MSYSTEM)" "MINGW32"
-arch = x86
-else # MINGW64
-arch = x64
 endif
+
+
 
 #
 # Handle user settings
@@ -380,7 +393,7 @@ CLEAN_DIR = $(GAMEDIR) $(OBJ)
 
 #=================================================================
 # LUA library
-# Source from http://www.lua.org/ftp/lua-5.4.6.tar.gz
+# Source from http://www.lua.org/ftp/lua-5.4.8.tar.gz
 #=================================================================
 
 OLUA = $(O)lua
@@ -414,8 +427,15 @@ $(U)lua.exe: $(OLUA)/lua.o $(LUALIB)
 $(LUADLL): $(ULUADLL)
 	cp $< $@
 
+
+ifeq "$(arch)" "arm64"
+lparam=-Wl,--export-all-symbols
+else
+lparam=-Wl,--export-all-symbols -Wl,--add-stdcall-alias
+endif
+
 $(ULUADLL) $(LUAIMP): $(LUAOBJS) | $(OLUA)
-	$(ld) $(LDFLAGS) -fPIC -shared -Wl,--export-all-symbols -Wl,--add-stdcall-alias \
+	$(ld) $(LDFLAGS) -fPIC -shared $(lparam) \
 		-Wl,--out-implib=$(LUAIMP) $^ -o$(ULUADLL)
 
 $(LUASTATIC): $(LUAOBJS) | $(OLUA) 
@@ -455,7 +475,7 @@ CLEAN_FILE += $(NHLUAH)
 LUALIST = air Arc-fila Arc-filb Arc-goal Arc-loca Arc-strt \
 	asmodeus astral baalz Bar-fila Bar-filb Bar-goal \
 	Bar-loca Bar-strt bigrm-1 bigrm-10 bigrm-11 bigrm-2 \
-	bigrm-12 \
+	bigrm-12 bigrm-13 \
 	bigrm-3 bigrm-4 bigrm-5 bigrm-6 bigrm-7 bigrm-8 \
 	bigrm-9 castle Cav-fila Cav-filb Cav-goal Cav-loca \
 	Cav-strt dungeon earth fakewiz1 fakewiz2 fire \
@@ -774,6 +794,7 @@ HACK_H = $(CONFIG_H) ../include/align.h ../include/artilist.h \
 	../include/decl.h ../include/defsym.h ../include/display.h \
 	../include/dungeon.h ../include/engrave.h ../include/flag.h \
 	../include/hack.h ../include/lint.h ../include/mextra.h \
+	../include/mcastu.h \
 	../include/mkroom.h ../include/monattk.h ../include/mondata.h \
 	../include/monflag.h ../include/monst.h ../include/monsters.h \
 	../include/nhlua.h ../include/obj.h ../include/objclass.h \
@@ -1045,8 +1066,8 @@ fetchpdcurses:
 	git submodule update ../submodules/$(PDCURSES) ; fi
 #	git submodule update --remote ../submodules/$(PDCURSES) ; fi
 else  # GIT_AVAILABLE no
-CURLLUASRC=http://www.lua.org/ftp/lua-5.4.6.tar.gz
-CURLLUADST=lua-5.4.6.tar.gz
+CURLLUASRC=http://www.lua.org/ftp/lua-5.4.8.tar.gz
+CURLLUADST=lua-5.4.8.tar.gz
 
 CURLPDCSRC=https://github.com/Bill-Gray/PDCursesMod/archive/refs/tags/v4.5.1.zip
 CURLPDCDST=$(PDCURSES).zip
@@ -1211,21 +1232,21 @@ COREOBJS = $(addsuffix .o, allmain alloc apply artifact attrib ball bones botl \
 	   calendar cfgfiles cmd coloratt cppregex \
 	   dbridge decl detect dig display dlb do do_name do_wear \
 	   dog dogmove dokick dothrow drawing dungeon \
-	   eat end engrave exper explode extralev files fountain \
-	   getpos glyphs hack insight invent isaac64 light lock \
+	   earlyarg eat end engrave exper explode extralev files fountain \
+	   getpos glyphs hack iactions insight invent isaac64 light lock \
 	   mail makemon mcastu mdlib mhitm mhitu minion mklev mkmap mkmaze mkobj mkroom \
 	   mon mondata monmove monst mplayer mthrowu muse music \
 	   nhlobj nhlsel nhlua windsound o_init objects objnam options \
 	   pager pickup pline polyself potion pray priest quest questpgr \
 	   random read rect region report restore rip rnd role rumors \
-	   safeproc save sfbase sfstruct shk shknam sit selvar sounds sp_lev \
+	   save sfbase sfstruct shk shknam sit selvar sounds sp_lev \
 	   spell stairs steal steed strutil \
 	   symbols sys teleport timeout topten track trap u_init uhitm utf8map \
 	   vault version vision weapon were wield windmain windows windsys wizard \
 	   wizcmds worm worn write zap $(SOUNDLIBOBJS))
 
-CFLAGSW = $(CFLAGS) $(CFLAGSXTRA) $(SOUNDLIBINCL) $(COMMONDEF) $(DLBFLG) -DTILES -D_WINDOWS -DMSWIN_GRAPHICS -DSAFEPROCS -DNOTTYGRAPHICS $(SOUNDLIBDEFS)
-CPPFLAGSW = $(CFLAGS) $(CPPFLAGSXTRA) $(COMMONDEF) $(DLBFLG) -DTILES -D_WINDOWS -DMSWIN_GRAPHICS -DSAFEPROCS -DNOTTYGRAPHICS $(SOUNDLIBDEFS)
+CFLAGSW = $(CFLAGS) $(CFLAGSXTRA) $(SOUNDLIBINCL) $(COMMONDEF) $(DLBFLG) -DTILES -D_WINDOWS -DMSWIN_GRAPHICS -DNOTTYGRAPHICS $(SOUNDLIBDEFS)
+CPPFLAGSW = $(CFLAGS) $(CPPFLAGSXTRA) $(COMMONDEF) $(DLBFLG) -DTILES -D_WINDOWS -DMSWIN_GRAPHICS -DNOTTYGRAPHICS $(SOUNDLIBDEFS)
 
 ONHW = $(O)nethackw
 NHWONLY = $(addsuffix .o, mhaskyn mhdlg mhfont mhinput mhmain mhmap mhmenu \
@@ -1327,8 +1348,8 @@ CLEAN_FILE += $(NHWTARGETS) $(NHWOBJS) $(NHWRES) $(BMPS) $(WAV)
 #==========================================
 # nethack
 #==========================================
-CFLAGSNH = $(CFLAGSU) $(CFLAGSXTRA) $(SOUNDLIBINCL) -DNO_TILE_C -DSAFEPROCS -D_LIB -DWIN32CON $(SOUNDLIBDEFS)
-CPPFLAGSNH = $(CFLAGSU) $(CPPFLAGSXTRA) -DNO_TILE_C -DSAFEPROCS -D_LIB -DWIN32CON $(SOUNDLIBDEFS)
+CFLAGSNH = $(CFLAGSU) $(CFLAGSXTRA) $(SOUNDLIBINCL) -DNO_TILE_C -D_LIB -DWIN32CON $(SOUNDLIBDEFS)
+CPPFLAGSNH = $(CFLAGSU) $(CPPFLAGSXTRA) -DNO_TILE_C -D_LIB -DWIN32CON $(SOUNDLIBDEFS)
 
 ONH = $(O)nethack
 
@@ -1357,7 +1378,16 @@ $(ONH)/%.o: $(SRC)/%.c $(NHLUAH) | $(ONH)
 #==========================================
 # package
 #==========================================
+ifeq "$(arch)" "x64"
 TARGET_CPU = x64
+else
+ifeq "$(arch)" "arm64"
+TARGET_CPU = arm64
+else
+TARGET_CPU = x86
+endif
+endif
+
 NHV=370
 PKGFILES = nethackrc.template Guidebook.txt license NetHack.exe NetHack.txt \
 	NetHackW.exe opthelp nhdat370 record symbols sysconf.template $(notdir $(LUADLL))

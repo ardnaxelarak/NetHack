@@ -8,6 +8,7 @@
 staticfn int monmulti(struct monst *, struct obj *, struct obj *);
 staticfn void monshoot(struct monst *, struct obj *, struct obj *);
 staticfn boolean ucatchgem(struct obj *, struct monst *);
+staticfn boolean u_catch_thrown_obj(struct obj *);
 staticfn const char *breathwep_name(int);
 staticfn boolean drop_throw(struct obj *, boolean, coordxy, coordxy);
 staticfn boolean blocking_terrain(coordxy, coordxy);
@@ -334,7 +335,7 @@ ohitmon(
     ismimic = M_AP_TYPE(mtmp) && M_AP_TYPE(mtmp) != M_AP_MONSTER;
     vis = cansee(gb.bhitpos.x, gb.bhitpos.y);
     if (vis)
-        otmp->dknown = 1;
+        observe_object(otmp);
 
     tmp = 5 + find_mac(mtmp) + omon_adj(mtmp, otmp, FALSE);
     /* High level monsters will be more likely to hit */
@@ -527,6 +528,27 @@ ucatchgem(
     return FALSE;
 }
 
+/* hero may catch thrown obj. it is added to inventory, if possible */
+staticfn boolean
+u_catch_thrown_obj(struct obj *otmp)
+{
+    int catch_chance = 100 - ACURR(A_DEX)
+                       - ((Role_if(PM_MONK) || Role_if(PM_ROGUE)) ? 20 : 0);
+
+    if (!Blind && !Confusion && !Stunned && !Fumbling
+        && otmp->oclass != VENOM_CLASS
+        && !nohands(gy.youmonst.data) && freehand()
+        && calc_capacity(otmp->owt) <= SLT_ENCUMBER && !rn2(catch_chance)) {
+        char buf[BUFSZ];
+
+        Snprintf(buf, BUFSZ, "You catch the %s!", simpleonames(otmp));
+        (void) hold_another_object(otmp, "You catch, but drop, the %s.",
+                                   simpleonames(otmp), buf);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 #define MT_FLIGHTCHECK(pre,forcehit) \
     (/* missile hits edge of screen */                                 \
      !isok(gb.bhitpos.x + dx, gb.bhitpos.y + dy)                       \
@@ -652,7 +674,7 @@ m_throw(
         singleobj->ox = gb.bhitpos.x += dx;
         singleobj->oy = gb.bhitpos.y += dy;
         if (cansee(gb.bhitpos.x, gb.bhitpos.y))
-            singleobj->dknown = 1;
+            observe_object(singleobj);
 
         mtmp = m_at(gb.bhitpos.x, gb.bhitpos.y);
         if (mtmp && shade_miss(mon, mtmp, singleobj, TRUE, TRUE)) {
@@ -666,13 +688,16 @@ m_throw(
             if (gm.multi)
                 nomul(0);
 
+            /* hero might be poly'd into a unicorn */
+            if (singleobj->oclass == GEM_CLASS && ucatchgem(singleobj, mon))
+                break;
+
+            if (!tethered_weapon && u_catch_thrown_obj(singleobj))
+                break;
+
             if (singleobj->oclass == POTION_CLASS) {
                 potionhit(&gy.youmonst, singleobj, POTHIT_MONST_THROW);
                 break;
-            } else if (singleobj->oclass == GEM_CLASS) {
-                /* hero might be poly'd into a unicorn */
-                if (ucatchgem(singleobj, mon))
-                    break;
             }
             oldumort = u.umortality;
 
@@ -698,8 +723,9 @@ m_throw(
                     hitv = 3 - distmin(u.ux, u.uy, mon->mx, mon->my);
                     if (hitv < -4)
                         hitv = -4;
+                    /* [elves get a shooting bonus, orcs don't...] */
                     if (is_elf(mon->data)
-                        && objects[singleobj->otyp].oc_skill == P_BOW) {
+                        && objects[singleobj->otyp].oc_skill == -P_BOW) {
                         hitv++;
                         if (MON_WEP(mon) && MON_WEP(mon)->otyp == ELVEN_BOW)
                             hitv++;
@@ -1093,7 +1119,8 @@ breamm(struct monst *mtmp, struct attack *mattk, struct monst *mtarg)
                           Monnam(mtmp), breathwep_name(typ));
                 gb.buzzer = mtmp;
                 dobuzz(BZ_M_BREATH(BZ_OFS_AD(typ)), (int) mattk->damn,
-                       mtmp->mx, mtmp->my, sgn(gt.tbx), sgn(gt.tby), utarget);
+                       mtmp->mx, mtmp->my, sgn(gt.tbx), sgn(gt.tby),
+                       utarget, utarget, FALSE);
                 gb.buzzer = 0;
                 nomul(0);
                 /* breath runs out sometimes. Also, give monster some
@@ -1416,7 +1443,7 @@ hit_bars(
         }
     } else {
         if (!Deaf) {
-            static enum sound_effect_entries se[] SOUNDLIBONLY = {
+            static enum sound_effect_entries se[] = {
                 se_zero_invalid,
                 se_bars_whang, se_bars_whap, se_bars_flapp,
                 se_bars_clink, se_bars_clonk
@@ -1436,6 +1463,7 @@ hit_bars(
 
             Soundeffect(se[bsindx], 100);
             pline("%s!", barsounds[bsindx]);
+            nhUse(se[bsindx]);
         }
         if (!(harmless_missile(otmp) || is_flimsy(otmp)))
             noise = 4 * 4;

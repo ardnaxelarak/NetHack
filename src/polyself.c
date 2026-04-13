@@ -1,4 +1,4 @@
-/* NetHack 3.7	polyself.c	$NHDT-Date: 1740534595 2025/02/25 17:49:55 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.223 $ */
+/* NetHack 3.7	polyself.c	$NHDT-Date: 1772101811 2026/02/26 02:30:11 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.227 $ */
 /*      Copyright (C) 1987, 1988, 1989 by Ken Arromdee */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -201,7 +201,8 @@ polyman(const char *fmt, const char *arg)
 {
     boolean sticking = (sticks(gy.youmonst.data) && u.ustuck && !u.uswallow),
             was_mimicking = (U_AP_TYPE != M_AP_NOTHING);
-    boolean was_blind = !!Blind;
+    boolean was_blind = !!Blind,
+            had_see_invis = !!See_invisible;
 
     if (Upolyd) {
         u.acurr = u.macurr; /* restore old attribs */
@@ -244,6 +245,9 @@ polyman(const char *fmt, const char *arg)
         dealloc_killer(kptr);
         done(GENOCIDED);
     }
+
+    if (!!See_invisible ^ had_see_invis)
+        set_mimic_blocking(); /* See_invisible just toggled */
 
     if (u.twoweap && !could_twoweap(gy.youmonst.data))
         untwoweapon();
@@ -425,7 +429,7 @@ newman(void)
             done(DIED);
             /* must have been life-saved to get here */
             newuhs(FALSE);
-            (void) encumber_msg(); /* used to be done by redist_attr() */
+            encumber_msg(); /* used to be done by redist_attr() */
             return; /* lifesaved */
         }
     }
@@ -454,7 +458,7 @@ newman(void)
 
     disp.botl = TRUE;
     see_monsters();
-    (void) encumber_msg();
+    encumber_msg();
 
     retouch_equipment(2);
     if (!uarmg)
@@ -646,7 +650,7 @@ polyself(int psflags)
                        re-converting scales to mail poses risk
                        of evaporation due to over enchanting */
                     uarm->otyp += GRAY_DRAGON_SCALES - GRAY_DRAGON_SCALE_MAIL;
-                    uarm->dknown = 1;
+                    observe_object(uarm);
                     disp.botl = TRUE; /* AC is changing */
                 }
                 uskin = uarm;
@@ -1012,7 +1016,7 @@ polymon(int mntmp)
     disp.botl = TRUE;
     gv.vision_full_recalc = 1;
     see_monsters();
-    (void) encumber_msg();
+    encumber_msg();
 
     retouch_equipment(2);
     /* this might trigger a recursive call to polymon() [stone golem
@@ -1172,15 +1176,9 @@ break_armor(void)
         if ((otmp = uarmc) != 0
             /* mummy wrapping adapts to small and very big sizes */
             && (otmp->otyp != MUMMY_WRAPPING || !WrappingAllowed(uptr))) {
-            if (otmp->oartifact) {
-                Your("%s falls off!", cloak_simple_name(otmp));
-                (void) Cloak_off();
-                dropp(otmp);
-            } else {
-                Your("%s tears apart!", cloak_simple_name(otmp));
-                (void) Cloak_off();
-                useup(otmp);
-            }
+            pline_The("clasp on your %s breaks open!", cloak_simple_name(otmp));
+            (void) Cloak_off();
+            dropp(otmp);
         }
         if (uarmu) {
             Your("shirt rips to shreds!");
@@ -1371,7 +1369,7 @@ rehumanize(void)
             return; /* don't rehumanize after all */
         } else if (uamul && uamul->otyp == AMULET_OF_UNCHANGING) {
             Your("%s %s!", simpleonames(uamul), otense(uamul, "fail"));
-            uamul->dknown = 1;
+            observe_object(uamul);
             makeknown(AMULET_OF_UNCHANGING);
         }
     }
@@ -1398,7 +1396,7 @@ rehumanize(void)
 
     disp.botl = TRUE;
     gv.vision_full_recalc = 1;
-    (void) encumber_msg();
+    encumber_msg();
     if (was_flying && !Flying && u.usteed)
         You("and %s return gently to the %s.",
             mon_nam(u.usteed), surface(u.ux, u.uy));

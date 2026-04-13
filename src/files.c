@@ -1174,7 +1174,7 @@ create_savefile(void)
         if (nhfp->fd >= 0)
             (void) setmode(nhfp->fd, O_BINARY);
 #endif
-	}
+        }
     }
 #if defined(VMS) && !defined(SECURE)
     /*
@@ -1218,7 +1218,7 @@ open_savefile(void)
 #ifdef SAVEFILE_DEBUGGING
             nhfp->fplog = fopen("open-savefile.log", "w");
 #endif
-	}
+        }
 #ifdef MAC
         nhfp->fd = macopen(fq_save, O_RDONLY | O_BINARY, SAVE_TYPE);
 #else
@@ -2046,13 +2046,15 @@ doconvert_file(const char *filename, int sfstatus, boolean unconvert)
 }
 
 /* convert file */
-void nh_sfconvert(const char *filename)
+void
+nh_sfconvert(const char *filename)
 {
     (void) doconvert_file(filename, 0, FALSE);
 }
 
 /* unconvert file if it exists */
-void nh_sfunconvert(const char *filename)
+void
+nh_sfunconvert(const char *filename)
 {
     (void) doconvert_file(filename, 0, TRUE);
 }
@@ -2140,7 +2142,8 @@ delete_convertedfile(const char *basefilename)
     return 0;
 }
 
-void free_convert_filenames(void)
+void
+free_convert_filenames(void)
 {
     if (converted_filename)
         free((genericptr_t) converted_filename), converted_filename = 0;
@@ -2515,7 +2518,7 @@ wizkit_addinv(struct obj *obj)
         return;
 
     /* subset of starting inventory pre-ID */
-    obj->dknown = 1;
+    observe_object(obj);
     if (Role_if(PM_CLERIC))
         obj->bknown = 1; /* ok to bypass set_bknown() */
     /* same criteria as lift_object()'s check for available inventory slot */
@@ -2543,8 +2546,10 @@ proc_wizkit_line(char *buf)
     otmp = readobjnam(buf, (struct obj *) 0);
 
     if (otmp) {
-        if (otmp != &hands_obj)
+        if (otmp != &hands_obj) {
+            wish_history_add(buf);
             wizkit_addinv(otmp);
+        }
     } else {
         /* .60 limits output line width to 79 chars */
         config_error_add("Bad wizkit item: \"%.60s\"", buf);
@@ -3136,11 +3141,6 @@ debugcore(const char *filename, boolean wildcards)
 #endif /*DEBUG*/
 
 #ifndef SFCTOOL
-#ifdef UNIX
-#ifndef PATH_MAX
-#include <limits.h>
-#endif
-#endif
 
 #define SYSCONFFILE "system configuration file"
 

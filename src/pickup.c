@@ -1,4 +1,4 @@
-/* NetHack 3.7	pickup.c	$NHDT-Date: 1720074481 2024/07/04 06:28:01 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.374 $ */
+/* NetHack 3.7	pickup.c	$NHDT-Date: 1773373633 2026/03/12 19:47:13 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.386 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -1805,7 +1805,6 @@ pickup_object(
     long count, /* if non-zero, pick up a subset of this amount */
     boolean telekinesis) /* not picking it up directly by hand */
 {
-    unsigned save_how_lost;
     int res;
 
     if (obj->quan < count) {
@@ -1816,7 +1815,7 @@ pickup_object(
     /* In case of auto-pickup, where we haven't had a chance
        to look at it yet; affects docall(SCR_SCARE_MONSTER). */
     if (!Blind)
-        obj->dknown = 1;
+        observe_object(obj);
 
     if (obj == uchain) { /* do not pick up attached chain */
         return 0;
@@ -1862,16 +1861,12 @@ pickup_object(
         }
     }
 
-    save_how_lost = obj->how_lost;
     /* obj has either already passed autopick_testobj or we are explicitly
-       picking it off the floor, so override obj->how_lost; otherwise we
-       couldn't pick up a thrown, stolen, or dropped item that was split
-       off from a carried stack even while still carrying the rest of the
-       stack unless we have at least one free slot available */
-    obj->how_lost &= ~LOSTOVERRIDEMASK;  /* affects merge_choice() */
+       picking it off the floor, so addinv() will override obj->how_lost;
+       otherwise we couldn't pick up a thrown, stolen, or dropped item that
+       was split off from a carried stack even while still carrying the
+       rest of the stack unless we have at least one free slot available */
     res = lift_object(obj, (struct obj *) 0, &count, telekinesis);
-    obj->how_lost = save_how_lost; /* even when res > 0,
-                                    * in case we call splitobj() below */
     if (res <= 0)
         return res;
 
@@ -1881,7 +1876,6 @@ pickup_object(
     if (obj->quan != count && obj->otyp != LOADSTONE)
         obj = splitobj(obj, count);
 
-    obj->how_lost &= ~LOSTOVERRIDEMASK;
     obj = pick_obj(obj);
 
     if (uwep && uwep == obj)
@@ -1972,10 +1966,9 @@ pickup_prinv(
 }
 
 /*
- * prints a message if encumbrance changed since the last check and
- * returns the new encumbrance value (from near_capacity()).
+ * prints a message if encumbrance changed since the last check
  */
-int
+void
 encumber_msg(void)
 {
     int newcap = near_capacity();
@@ -2018,7 +2011,6 @@ encumber_msg(void)
     }
 
     go.oldcap = newcap;
-    return newcap;
 }
 
 /* Is there a container at x,y. Optional: return count of containers at x,y */
@@ -2865,9 +2857,19 @@ observe_quantum_cat(struct obj *box, boolean makecat, boolean givemsg)
             }
             box->owt = weight(box);
             box->spe = 0;
+
+            if (!svc.context.mon_moving) {
+                /* give experience points for releasing live cat; slightly
+                   different amount from what is given for "killing" it */
+                more_experienced(10, 20); /* 10:current exp; 20:score bonus */
+                newexplevel();
+            }
         }
     } else {
         box->spe = 0; /* now an ordinary box (with a cat corpse inside) */
+        if (givemsg)
+            pline_The("%s inside the box is dead!",
+                      Hallucination ? rndmonnam((char *) 0) : "housecat");
         if (deadcat) {
             /* set_corpsenm() will start the rot timer that was removed
                when makemon() created SchroedingersBox; start it from
@@ -2875,10 +2877,14 @@ observe_quantum_cat(struct obj *box, boolean makecat, boolean givemsg)
             deadcat->age = svm.moves;
             set_corpsenm(deadcat, PM_HOUSECAT);
             deadcat = oname(deadcat, sc, ONAME_NO_FLAGS);
+
+            if (!svc.context.mon_moving) {
+                /* give experience points for the death of the cat since
+                   that has been finalized by the hero opening the box */
+                more_experienced(20, 10); /* 20:current exp; 10:score bonus */
+                newexplevel();
+            }
         }
-        if (givemsg)
-            pline_The("%s inside the box is dead!",
-                      Hallucination ? rndmonnam((char *) 0) : "housecat");
     }
     nhUse(deadcat);
     return;
@@ -3821,7 +3827,7 @@ tipcontainer(struct obj *box) /* or bag */
         if (targetbox)
             targetbox->owt = weight(targetbox);
         if (srcheld || dstheld)
-            (void) encumber_msg();
+            encumber_msg();
     }
 
     if (srcheld || dstheld)

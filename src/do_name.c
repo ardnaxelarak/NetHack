@@ -669,8 +669,10 @@ docall(struct obj *obj)
             undiscover_object(obj->otyp);
     } else {
         *uname_p = dupstr(buf);
-        discover_object(obj->otyp, FALSE, TRUE); /* possibly add to disco[] */
+        discover_object(obj->otyp, FALSE, TRUE, TRUE); /* possibly add to disco[] */
     }
+    if (obj->where == OBJ_INVENT || carrying(obj->otyp))
+        update_inventory();
 }
 
 staticfn void

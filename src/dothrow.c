@@ -268,7 +268,7 @@ throw_obj(struct obj *obj, int shotlimit)
         }
         freeinv(otmp);
         throwit(otmp, wep_mask, twoweap, oldslot);
-        (void) encumber_msg();
+        encumber_msg();
     }
     gm.m_shot.n = gm.m_shot.i = 0;
     gm.m_shot.o = STRANGE_OBJECT;
@@ -1268,7 +1268,14 @@ toss_up(struct obj *obj, boolean hitsroof)
         if (breaktest(obj)) {
             pline("%s hits the %s.", Doname2(obj), ceiling(u.ux, u.uy));
             breakmsg(obj, !Blind);
-            return breakobj(obj, u.ux, u.uy, TRUE, TRUE) ? FALSE : TRUE;
+            /* crackable armor will return True for breaktest() but will
+               usually return False for breakobj() */
+            if (!breakobj(obj, u.ux, u.uy, TRUE, TRUE)) {
+                hitfloor(obj, FALSE);
+                gt.thrownobj = 0;
+                return TRUE;
+            }
+            return FALSE;
         }
         action = "hits";
     } else {
@@ -1467,6 +1474,37 @@ swallowit(struct obj *obj)
         throwit_return(TRUE);
 }
 
+/* thrown object hits a monster.
+   mon may be NULL.
+   returns TRUE if shopkeeper caught the object.
+   may delete object, clearing gt.thrownobj */
+boolean
+throwit_mon_hit(struct obj *obj, struct monst *mon)
+{
+    if (mon) {
+        boolean obj_gone;
+
+        if (mon->isshk && obj->where == OBJ_MINVENT && obj->ocarry == mon) {
+            return TRUE;
+        }
+        (void) snuff_candle(obj);
+        gn.notonhead = (gb.bhitpos.x != mon->mx || gb.bhitpos.y != mon->my);
+        obj_gone = thitmonst(mon, obj);
+        /* Monster may have been tamed; this frees old mon [obsolete] */
+        mon = m_at(gb.bhitpos.x, gb.bhitpos.y);
+
+        /* [perhaps this should be moved into thitmonst or hmon] */
+        if (mon && mon->isshk
+            && (!inside_shop(u.ux, u.uy)
+                || !strchr(in_rooms(mon->mx, mon->my, SHOPBASE), *u.ushops)))
+            hot_pursuit(mon);
+
+        if (obj_gone)
+            gt.thrownobj = (struct obj *) 0;
+    }
+    return FALSE;
+}
+
 /* throw an object, NB: obj may be consumed in the process */
 void
 throwit(
@@ -1600,8 +1638,13 @@ throwit(
                     range = BOLT_LIM;
                 else
                     range++;
-            } else if (obj->oclass != GEM_CLASS)
+            } else if (obj->oclass != GEM_CLASS) {
                 range /= 2;
+                pline("You aren't wielding %s, so you throw your %s by %s.",
+                      an(skill_name(weapon_type(obj))),
+                      weapon_descr(obj),
+                      body_part(HAND));
+            }
         }
 
         if (Is_airlevel(&u.uz) || Levitation) {
@@ -1649,27 +1692,9 @@ throwit(
         }
     }
 
-    if (mon) {
-        boolean obj_gone;
-
-        if (mon->isshk && obj->where == OBJ_MINVENT && obj->ocarry == mon) {
-            throwit_return(TRUE); /* alert shk caught it */
-            return;
-        }
-        (void) snuff_candle(obj);
-        gn.notonhead = (gb.bhitpos.x != mon->mx || gb.bhitpos.y != mon->my);
-        obj_gone = thitmonst(mon, obj);
-        /* Monster may have been tamed; this frees old mon [obsolete] */
-        mon = m_at(gb.bhitpos.x, gb.bhitpos.y);
-
-        /* [perhaps this should be moved into thitmonst or hmon] */
-        if (mon && mon->isshk
-            && (!inside_shop(u.ux, u.uy)
-                || !strchr(in_rooms(mon->mx, mon->my, SHOPBASE), *u.ushops)))
-            hot_pursuit(mon);
-
-        if (obj_gone)
-            gt.thrownobj = (struct obj *) 0;
+    if (throwit_mon_hit(obj, mon)) {
+        throwit_return(TRUE); /* alert shk caught it */
+        return;
     }
 
     if (!gt.thrownobj) {
@@ -1692,7 +1717,7 @@ throwit(
                 if (!impaired && rn2(100)) {
                     pline("%s to your hand!", Tobjnam(obj, "return"));
                     obj = addinv_before(obj, oldslot);
-                    (void) encumber_msg();
+                    encumber_msg();
                     /* addinv autoquivers an aklys if quiver is empty;
                        if obj is quivered, remove it before wielding */
                     if (obj->owornmask & W_QUIVER)
@@ -1879,7 +1904,7 @@ return_throw_to_inv(
             set_twoweap(TRUE); /* u.twoweap = TRUE */
     }
 
-    (void) encumber_msg();
+    encumber_msg();
     return obj;
 }
 
@@ -2117,7 +2142,7 @@ thitmonst(
                     sho_obj_return_to_u(obj);
                 obj = addinv(obj); /* back into your inventory */
                 nhUse(obj);
-                (void) encumber_msg();
+                encumber_msg();
             }
             return 1; /* caller doesn't need to place it */
         }

@@ -9,9 +9,6 @@
 #ifndef NO_SIGNAL
 #include <signal.h>
 #endif
-#ifndef LONG_MAX
-#include <limits.h>
-#endif
 #include "dlb.h"
 
 #ifndef SFCTOOL
@@ -98,7 +95,8 @@ done2(void)
         && y_n("Switch from the tutorial back to regular play?") == 'y')
         abandon_tutorial = TRUE;
 
-    if (abandon_tutorial || !paranoid_query(ParanoidQuit, "Really quit?")) {
+    if (abandon_tutorial || !paranoid_query(
+            ParanoidQuit, "Really quit without saving?")) {
 #ifndef NO_SIGNAL
         (void) signal(SIGINT, (SIG_RET_TYPE) done1);
 #endif
@@ -478,7 +476,8 @@ staticfn boolean
 should_query_disclose_option(int category, char *defquery)
 {
     int idx;
-    char disclose, *dop;
+    char disclose;
+    const char *dop;
 
     *defquery = 'n';
     if ((dop = strchr(disclosure_options, category)) != 0) {
@@ -599,13 +598,15 @@ dump_everything(
     /* overview of the game up to this point */
     show_gamelog((how >= PANICKED) ? ENL_GAMEOVERALIVE : ENL_GAMEOVERDEAD);
     putstr(0, 0, "");
-    list_vanquished('d', FALSE); /* 'd' => 'y' */
-    putstr(0, 0, "");
-    list_genocided('d', FALSE); /* 'd' => 'y' */
-    putstr(0, 0, "");
+    show_spells(); /* ends with a blank line */
+    show_skills(); /* ends with a blank line */
     show_conduct((how >= PANICKED) ? 1 : 2);
     putstr(0, 0, "");
     show_overview((how >= PANICKED) ? 1 : 2, how);
+    putstr(0, 0, "");
+    list_vanquished('d', FALSE); /* 'd' => 'y' */
+    putstr(0, 0, "");
+    list_genocided('d', FALSE); /* 'd' => 'y' */
     putstr(0, 0, "");
     dump_redirect(FALSE);
 #else
@@ -921,7 +922,8 @@ artifact_score(
             if (counting) {
                 u.urexp = nowrap_add(u.urexp, points);
             } else {
-                discover_object(otmp->otyp, TRUE, FALSE);
+                discover_object(otmp->otyp, TRUE, TRUE, FALSE);
+                /* not observe_object; dead characters don't observe */
                 otmp->known = otmp->dknown = otmp->bknown = otmp->rknown = 1;
                 /* assumes artifacts don't have quan > 1 */
                 Sprintf(pbuf, "%s%s (worth %ld %s and %ld points)",
@@ -1254,7 +1256,8 @@ really_done(int how)
          */
         for (obj = gi.invent; obj; obj = nextobj) {
             nextobj = obj->nobj;
-            discover_object(obj->otyp, TRUE, FALSE);
+            discover_object(obj->otyp, TRUE, TRUE, FALSE);
+            /* observe_object not necessary after discover_object */
             obj->known = obj->bknown = obj->dknown = obj->rknown = 1;
             set_cknown_lknown(obj); /* set flags when applicable */
             /* we resolve Schroedinger's cat now in case of both
@@ -1496,9 +1499,10 @@ really_done(int how)
                 if (objects[typ].oc_class != GEM_CLASS
                     || typ <= LAST_REAL_GEM) {
                     otmp = mksobj(typ, FALSE, FALSE);
-                    discover_object(otmp->otyp, TRUE, FALSE);
-                    otmp->known = 1;  /* for fake amulets */
+                    discover_object(otmp->otyp, TRUE, TRUE, FALSE);
                     otmp->dknown = 1; /* seen it (blindness fix) */
+                    /* observe_object not necessary after discover_object */
+                    otmp->known = 1;  /* for fake amulets */
                     if (has_oname(otmp))
                         free_oname(otmp);
                     otmp->quan = count;
@@ -1634,9 +1638,9 @@ container_contents(
                                           (boolean (*)(OBJ_P)) 0);
                     for (srtc = sortedcobj; (obj = srtc->obj) != 0; ++srtc) {
                         if (identified) {
-                            discover_object(obj->otyp, TRUE, FALSE);
-                            obj->known = obj->bknown = obj->dknown
-                                = obj->rknown = 1;
+                            discover_object(obj->otyp, TRUE, TRUE, FALSE);
+                            obj->dknown = 1; /* observe_object unnecessary */
+                            obj->known = obj->bknown = obj->rknown = 1;
                             if (Is_container(obj) || obj->otyp == STATUE)
                                 obj->cknown = obj->lknown = 1;
                         }
@@ -1759,7 +1763,7 @@ save_killers(NHFILE *nhfp)
 
     if (update_file(nhfp)) {
         for (kptr = &svk.killer; kptr; kptr = kptr->next) {
-	    Sfo_kinfo(nhfp, kptr, "kinfo");
+            Sfo_kinfo(nhfp, kptr, "kinfo");
         }
     }
     if (release_data(nhfp)) {

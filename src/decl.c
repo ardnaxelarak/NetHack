@@ -247,6 +247,7 @@ static const struct instance_globals_c g_init_c = {
     /* decl.c */
     UNDEFINED_VALUES, /* chosen_windowtype */
     0, /* cmd_key */
+    NULL, /* cmd_bind */
     0L, /* command_count */
     UNDEFINED_PTR, /* current_wand */
 #ifdef DEF_PAGER
@@ -413,6 +414,7 @@ static const struct instance_globals_i g_init_i = {
     /* invent.c */
     NULL, /* invbuf */
     0U, /* invbufsize */
+    FALSE, /* item_action_in_progress */
     0,       /* in_sync_perminvent */
     /* mon.c */
     NULL, /* itermonarr */
@@ -590,7 +592,7 @@ static const struct instance_globals_o g_init_o = {
     /* o_init.c */
     DUMMY, /* oclass_prob_totals */
     /* options.c */
-    0, /* opt_phase */
+    phase_not_set, /* opt_phase */
     FALSE, /* opt_initial */
     FALSE, /* opt_from_file */
     FALSE, /* opt_need_redraw */
@@ -673,6 +675,8 @@ static const struct instance_globals_r g_init_r = {
 };
 
 static const struct instance_globals_s g_init_s = {
+    /* allmain.c */
+    FALSE, /* saving_grace_turn */
     /* artifact.c */
     0,  /* spec_dbon_applies */
     /* decl.c */
@@ -763,6 +767,8 @@ static const struct instance_globals_t g_init_t = {
 };
 
 static const struct instance_globals_u g_init_u = {
+    /* allmain.c */
+    0, /* uhp_at_start_of_monster_turn */
     /* botl.c */
     FALSE, /* update_all */
     /* decl.c */

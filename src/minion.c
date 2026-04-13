@@ -1,4 +1,4 @@
-/* NetHack 3.7	minion.c	$NHDT-Date: 1624322864 2021/06/22 00:47:44 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.60 $ */
+/* NetHack 3.7	minion.c	$NHDT-Date: 1762727599 2025/11/09 14:33:19 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.81 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2008. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -332,7 +332,8 @@ demon_talk(struct monst *mtmp)
         else if (canseemon(mtmp))
             pline("%s seems to be demanding something.", Amonnam(mtmp));
         offer = 0L;
-        if (!Deaf && ((offer = bribe(mtmp)) >= demand)) {
+        if (!Deaf &&
+            ((offer = bribe(mtmp, "How much will you offer?")) >= demand)) {
             pline("%s vanishes, laughing about cowardly mortals.",
                   Amonnam(mtmp));
         } else if (offer > 0L
@@ -346,20 +347,24 @@ demon_talk(struct monst *mtmp)
             return 0;
         }
     }
+    /* if 'mtmp' is unrecognizable due to hero's hallucination,
+       #chronicle will reveal its true identity -- just live with that;
+       also, avoid random hallucinatory currency() units */
     livelog_printf(LL_UMONST, "bribed %s with %ld %s for safe passage",
-                   Amonnam(mtmp), offer, currency(offer));
+                   x_monnam(mtmp, ARTICLE_A, (char *) 0, EXACT_NAME, FALSE),
+                   offer, (offer == 1L) ? "zorkmid" : "zorkmids");
     mongone(mtmp);
     return 1;
 }
 
 long
-bribe(struct monst *mtmp)
+bribe(struct monst *mtmp, const char *prompt)
 {
     char buf[BUFSZ] = DUMMY;
     long offer;
     long umoney = money_cnt(gi.invent);
 
-    getlin("How much will you offer?", buf);
+    getlin(prompt, buf);
     if (sscanf(buf, "%ld", &offer) != 1)
         offer = 0L;
 

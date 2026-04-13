@@ -1,12 +1,9 @@
-/* NetHack 3.7	botl.c	$NHDT-Date: 1742207239 2025/03/17 02:27:19 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.274 $ */
+/* NetHack 3.7	botl.c	$NHDT-Date: 1769839231 2026/01/30 22:00:31 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.277 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2006. */
 /* NetHack may be freely redistributed.  See license for details. */
 
 #include "hack.h"
-#ifndef LONG_MAX
-#include <limits.h>
-#endif
 
 extern const char *const hu_stat[]; /* defined in eat.c */
 
@@ -19,9 +16,8 @@ const char *const enc_stat[] = {
 staticfn const char *rank(void);
 staticfn void bot_via_windowport(void);
 staticfn void stat_update_time(void);
-staticfn char *get_strength_str(void);
 
-staticfn char *
+char *
 get_strength_str(void)
 {
     static char buf[32];
@@ -61,7 +57,7 @@ do_statusline1(void)
     Strcpy(newbot1, svp.plname);
     if ('a' <= newbot1[0] && newbot1[0] <= 'z')
         newbot1[0] += 'A' - 'a';
-    newbot1[10] = 0;
+    newbot1[BOTL_NSIZ] = 0;
     Sprintf(nb = eos(newbot1), " the ");
 
     if (Upolyd) {
@@ -773,12 +769,12 @@ bot_via_windowport(void)
     nb[0] = highc(nb[0]);
     titl = !Upolyd ? rank() : pmname(&mons[u.umonnum], Ugender);
     i = (int) (strlen(buf) + sizeof " the " + strlen(titl) - sizeof "");
-    /* if "Name the Rank/monster" is too long, we truncate the name
-       but always keep at least 10 characters of it; when hitpointbar is
+    /* if "Name the Rank/monster" is too long, we truncate the name but
+       always keep at least BOTL_NSIZ characters of it; when hitpointbar is
        enabled, anything beyond 30 (long monster name) will be truncated */
     if (i > 30) {
         i = 30 - (int) (sizeof " the " + strlen(titl) - sizeof "");
-        nb[max(i, 10)] = '\0';
+        nb[max(i, BOTL_NSIZ)] = '\0';
     }
     Strcpy(nb = eos(nb), " the ");
     Strcpy(nb = eos(nb), titl);
@@ -3641,6 +3637,7 @@ status_hilite_menu_add(int origfld)
     unsigned long cond = 0UL;
     char colorqry[BUFSZ];
     char attrqry[BUFSZ];
+    int retry = 0;
 
  choose_field:
     fld = origfld;
@@ -3676,6 +3673,10 @@ status_hilite_menu_add(int origfld)
     hilite.behavior = behavior;
 
  choose_value:
+    if (retry++ > 5) {
+        pline("That's enough tries.");
+        return FALSE;
+    }
     if (behavior == BL_TH_VAL_PERCENTAGE
         || behavior == BL_TH_VAL_ABSOLUTE) {
         char inbuf[BUFSZ], buf[BUFSZ];
@@ -4302,7 +4303,9 @@ status_hilite_menu(void)
     countall = status_hilite_linestr_countfield(BL_FLUSH);
     status_hilite_linestr_done();
 
-    if (redo)
+    /* fuzzer is unlikely to pick something useful within nested menus;
+       limit it to one try */
+    if (redo && !iflags.debug_fuzzer)
         goto shlmenu_redo;
 
     /* hilite_delta=='statushilites' does double duty:  it is the

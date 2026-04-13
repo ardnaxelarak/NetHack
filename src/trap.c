@@ -16,6 +16,7 @@ staticfn boolean mu_maybe_destroy_web(struct monst *, boolean, struct trap *);
 staticfn struct obj *t_missile(int, struct trap *);
 staticfn boolean floor_trigger(int);
 staticfn boolean check_in_air(struct monst *, unsigned);
+staticfn boolean wearing_iron_shoes(struct monst *);
 staticfn int trapeffect_arrow_trap(struct monst *, struct trap *, unsigned);
 staticfn int trapeffect_dart_trap(struct monst *, struct trap *, unsigned);
 staticfn int trapeffect_rocktrap(struct monst *, struct trap *, unsigned);
@@ -548,7 +549,7 @@ maketrap(coordxy x, coordxy y, int typ)
 
         /*
          * some cases which can happen when digging
-         * down while phazing thru solid areas
+         * down while phasing thru solid areas
          */
         } else if (lev->typ == STONE || lev->typ == SCORR) {
             (void) set_levltyp(x, y, CORR);
@@ -1093,6 +1094,14 @@ check_in_air(struct monst *mtmp, unsigned trflags)
             || ((is_you ? Flying : is_flyer(mtmp->data)) && !plunged));
 }
 
+/* return TRUE if mtmp is wearing iron shoes */
+staticfn boolean
+wearing_iron_shoes(struct monst *mtmp)
+{
+    struct obj *armf = which_armor(mtmp, W_ARMF);
+    return armf && armf->otyp == IRON_SHOES;
+}
+
 /* is trap ttmp harmless to monster mtmp? */
 boolean
 m_harmless_trap(struct monst *mtmp, struct trap *ttmp)
@@ -1206,7 +1215,7 @@ trapeffect_arrow_trap(
         } else {
             place_object(otmp, u.ux, u.uy);
             if (!Blind)
-                otmp->dknown = 1;
+                observe_object(otmp);
             stackobj(otmp);
             newsym(u.ux, u.uy);
         }
@@ -1276,7 +1285,7 @@ trapeffect_dart_trap(
         } else {
             place_object(otmp, u.ux, u.uy);
             if (!Blind)
-                otmp->dknown = 1;
+                observe_object(otmp);
             stackobj(otmp);
             newsym(u.ux, u.uy);
         }
@@ -1352,7 +1361,7 @@ trapeffect_rocktrap(
                 harmless = TRUE;
             }
             if (!Blind)
-                otmp->dknown = 1;
+                observe_object(otmp);
             stackobj(otmp);
             newsym(u.ux, u.uy); /* map the rock */
 
@@ -1501,10 +1510,14 @@ trapeffect_bear_trap(
         } else {
             pline("%s bear trap closes on your %s!", A_Your[trap->madeby_u],
                   body_part(FOOT));
-            set_wounded_legs(rn2(2) ? RIGHT_SIDE : LEFT_SIDE, rn1(10, 10));
             if (u.umonnum == PM_OWLBEAR || u.umonnum == PM_BUGBEAR)
                 You("howl in anger!");
-            losehp(Maybe_Half_Phys(dmg), "bear trap", KILLED_BY_AN);
+            if (wearing_iron_shoes(mtmp))
+                pline("%s protects your leg.", Yname2(uarmf));
+            else {
+                set_wounded_legs(rn2(2) ? RIGHT_SIDE : LEFT_SIDE, rn1(10, 10));
+                losehp(Maybe_Half_Phys(dmg), "bear trap", KILLED_BY_AN);
+            }
         }
         exercise(A_DEX, FALSE);
     } else {
@@ -1535,7 +1548,7 @@ trapeffect_bear_trap(
                 seetrap(trap);
             }
         }
-        if (mtmp->mtrapped)
+        if (mtmp->mtrapped && !wearing_iron_shoes(mtmp))
             trapkilled = thitm(0, mtmp, (struct obj *) 0, d(2, 4), FALSE);
 
         return trapkilled ? Trap_Killed_Mon : mtmp->mtrapped
@@ -1813,6 +1826,9 @@ trapeffect_pit(
     unsigned int trflags)
 {
     int ttype = trap->ttyp;
+    /* relevant_spikes is initially always true for spiked pits, but
+       set to false if the spikes are found to not be relevant */
+    boolean relevant_spikes = ttype == SPIKED_PIT;
 
     if (mtmp == &gy.youmonst) {
         boolean plunged = (trflags & TOOKPLUNGE) != 0;
@@ -1880,7 +1896,10 @@ trapeffect_pit(
         } else if (u.umonnum == PM_PIT_VIPER || u.umonnum == PM_PIT_FIEND) {
             pline("How pitiful.  Isn't that the pits?");
         }
-        if (ttype == SPIKED_PIT) {
+        if (relevant_spikes && wearing_iron_shoes(mtmp)) {
+            pline("%s protects you from the sharp iron spikes.", Yname2(uarmf));
+            relevant_spikes = FALSE;
+        } else if (relevant_spikes) {
             const char *predicament = "on a set of sharp iron spikes";
 
             if (u.usteed) {
@@ -1898,7 +1917,7 @@ trapeffect_pit(
          */
         set_utrap((unsigned) rn1(6, 2), TT_PIT);
         if (!steedintrap(trap, (struct obj *) 0)) {
-            if (ttype == SPIKED_PIT) {
+            if (relevant_spikes) {
                 int oldumort = u.umortality;
 
                 losehp(Maybe_Half_Phys(rnd(conj_pit ? 4 : adj_pit ? 6 : 10)),
@@ -1977,8 +1996,9 @@ trapeffect_pit(
             seetrap(trap);
         }
         mselftouch(mtmp, "Falling, ", FALSE);
+        if (wearing_iron_shoes(mtmp)) relevant_spikes = FALSE;
         if (DEADMONSTER(mtmp) || thitm(0, mtmp, (struct obj *) 0,
-                                       rnd((ttype == PIT) ? 6 : 10), FALSE))
+                                       rnd(relevant_spikes ? 10 : 6), FALSE))
             trapkilled = TRUE;
 
         return trapkilled ? Trap_Killed_Mon : mtmp->mtrapped
@@ -2125,7 +2145,7 @@ trapeffect_web(
         /* time will be adjusted below */
         set_utrap(1, TT_WEB);
 
-        /* Time stuck in the web depends on your/steed strength. */
+        /* Time stuck in the web depends on your/steed's strength. */
         {
             int tim, str = ACURR(A_STR);
 
@@ -2303,6 +2323,24 @@ trapeffect_anti_magic(
     struct trap *trap,  /* trap->ttyp == ANTI_MAGIC */
     unsigned int trflags UNUSED)
 {
+    if (wearing_iron_shoes(mtmp)) {
+        struct obj *shoes = which_armor(mtmp, W_ARMF);
+        /* iron shoes protect against antimagic traps only if
+           positively enchanted; the trap drains the enchantment
+           rather than the wearer */
+        if (shoes->spe > 0) {
+            /* no message if a monster does this, it isn't visible enough */
+            if (mtmp == &gy.youmonst) {
+                seetrap(trap);
+                pline("A lethargic aura surrounds %s.", yname(shoes));
+                costly_alteration(shoes, COST_DECHNT);
+            }
+            shoes->spe -= 1;
+            update_inventory();
+            return Trap_Effect_Finished;
+        }
+    }
+
     if (mtmp == &gy.youmonst) {
         int drain, halfd;
         boolean exclaim_it = FALSE;
@@ -2415,6 +2453,10 @@ trapeffect_poly_trap(
     struct trap *trap,
     unsigned int trflags)
 {
+    static int possible_boots[] = {
+        ELVEN_BOOTS, KICKING_BOOTS, FUMBLE_BOOTS, LEVITATION_BOOTS,
+        JUMPING_BOOTS, SPEED_BOOTS, WATER_WALKING_BOOTS };
+
     if (mtmp == &gy.youmonst) {
         boolean viasitting = (trflags & VIASITTING) != 0;
         int steed_article = ARTICLE_THE;
@@ -2435,7 +2477,14 @@ trapeffect_poly_trap(
         else
             Sprintf(verbbuf, "%s onto", u_locomotion("step"));
         You("%s a polymorph trap!", verbbuf);
-        if (Antimagic || Unchanging) {
+        if (wearing_iron_shoes(mtmp)) {
+            deltrap(trap);
+            pline("%s warps strangely.", Yname2(uarmf));
+            poly_obj(uarmf, ROLL_FROM(possible_boots));
+            update_inventory();
+            if (uarmf)
+                prinv(NULL, uarmf, 0);
+        } else if (Antimagic || Unchanging) {
             shieldeff(u.ux, u.uy);
             You_feel("momentarily different.");
             /* Trap did nothing; don't remove it --KAA */
@@ -2449,7 +2498,22 @@ trapeffect_poly_trap(
     } else {
         boolean in_sight = canseemon(mtmp) || (mtmp == u.usteed);
 
-        if (resists_magm(mtmp)) {
+        if (wearing_iron_shoes(mtmp)) {
+            /* remove and readd the shoes to forcibly unwear them */
+            struct obj *shoes = which_armor(mtmp, W_ARMF);
+            extract_from_minvent(mtmp, shoes, TRUE, TRUE);
+            if (mpickobj(mtmp, shoes)) {
+                impossible("re-equipping iron shoes destroyed them?");
+                return Trap_Effect_Finished;
+            }
+            shoes = poly_obj(shoes, ROLL_FROM(possible_boots));
+            /* now equip them again */
+            if (shoes) {
+                mtmp->misc_worn_check |= W_ARMF;
+                shoes->owornmask = W_ARMF;
+                update_mon_extrinsics(mtmp, shoes, TRUE, TRUE);
+            }
+        } else if (resists_magm(mtmp)) {
             shieldeff_mon(mtmp);
         } else if (!resist(mtmp, WAND_CLASS, 0, NOTELL)) {
             (void) newcham(mtmp, (struct permonst *) 0, NC_SHOW_MSG);
@@ -2466,6 +2530,13 @@ trapeffect_landmine(
     struct trap *trap,
     unsigned int trflags)
 {
+    int damage = rnd(16);
+    /* iron shoes protect against much of the damage from the
+       explosion, but you still take some damage (and wound legs)
+       because they can't fully block the blast */
+    if (wearing_iron_shoes(mtmp))
+        damage = (damage + 3) / 4;
+
     if (mtmp == &gy.youmonst) {
         boolean already_seen = trap->tseen;
         boolean forcetrap = ((trflags & FORCETRAP) != 0
@@ -2491,8 +2562,8 @@ trapeffect_landmine(
                   already_seen ? " land mine" : "it");
         } else {
             /* prevent landmine from killing steed, throwing you to
-             * the ground, and you being affected again by the same
-             * mine because it hasn't been deleted yet
+             * the ground, and then that same landmine affecting you
+             * again because it hasn't been deleted yet
              */
             static boolean recursive_mine = FALSE;
 
@@ -2515,7 +2586,7 @@ trapeffect_landmine(
            blow_up_landmine() will remove pit afterwards if inappropriate */
         trap->ttyp = PIT;
         trap->madeby_u = FALSE;
-        losehp(Maybe_Half_Phys(rnd(16)), "land mine", KILLED_BY_AN);
+        losehp(Maybe_Half_Phys(damage), "land mine", KILLED_BY_AN);
         blow_up_landmine(trap);
         if (steed_mid && saddle && !u.usteed)
             (void) keep_saddle_with_steedcorpse(steed_mid, fobj, saddle);
@@ -2564,7 +2635,7 @@ trapeffect_landmine(
         /* explosion might have destroyed a drawbridge; don't
            dish out more damage if monster is already dead */
         if (DEADMONSTER(mtmp)
-            || thitm(0, mtmp, (struct obj *) 0, rnd(16), FALSE)) {
+            || thitm(0, mtmp, (struct obj *) 0, damage, FALSE)) {
             trapkilled = TRUE;
         } else {
             /* monsters recursively fall into new pit */
@@ -3228,7 +3299,8 @@ launch_obj(
     newsym(x1, y1);
     /* in case you're using a pick-axe to chop the boulder that's being
        launched (perhaps a monster triggered it), destroy context so that
-       next dig attempt never thinks you're resuming previous effort */
+       the next dig attempt never thinks that you're resuming
+       the previous effort */
     if ((otyp == BOULDER || otyp == STATUE)
         && singleobj->ox == svc.context.digging.pos.x
         && singleobj->oy == svc.context.digging.pos.y)
@@ -3907,7 +3979,7 @@ float_up(void)
     float_vs_flight(); /* set BFlying, also BLevitation if still trapped */
     /* levitation gives maximum carrying capacity, so encumbrance
        state might be reduced */
-    (void) encumber_msg();
+    encumber_msg();
     return;
 }
 
@@ -3954,7 +4026,7 @@ float_down(
                       : (u.utraptype == TT_BURIEDBALL) ? "chain"
                           : (u.utraptype == TT_LAVA) ? "lava"
                               : "ground"); /* TT_INFLOOR */
-        (void) encumber_msg(); /* carrying capacity might have changed */
+        encumber_msg(); /* carrying capacity might have changed */
         return 0;
     }
     disp.botl = TRUE;
@@ -3965,14 +4037,14 @@ float_down(
                             * unless hero is stuck in floor */
         if (Flying) {
             You("have stopped levitating and are now flying.");
-            (void) encumber_msg(); /* carrying capacity might have changed */
+            encumber_msg(); /* carrying capacity might have changed */
             return 1;
         }
     }
     if (u.uswallow) {
         You("float down, but you are still %s.",
             digests(u.ustuck->data) ? "swallowed" : "engulfed");
-        (void) encumber_msg();
+        encumber_msg();
         return 1;
     }
 
@@ -4056,7 +4128,7 @@ float_down(
     /* levitation gives maximum carrying capacity, so having it end
        potentially triggers greater encumbrance; do this after
        'come down' messages, before trap activation or autopickup */
-    (void) encumber_msg();
+    encumber_msg();
 
     /* can't rely on u.uz0 for detecting trap door-induced level change;
        it gets changed to reflect the new level before we can check it */
@@ -4663,8 +4735,8 @@ water_damage(
         water_damage_chain(obj->cobj, FALSE);
         return ER_DAMAGED; /* contents were damaged */
     } else if (Waterproof_container(obj)) {
-        if (in_invent) {
-            pline_The("%s slides right off your %s.", hliquid("water"), ostr);
+        if (in_invent && !Blind && !Underwater) {
+            pline_The("%s cannot get into your %s.", hliquid("water"), ostr);
             gm.mentioned_water = !Hallucination;
             makeknown(obj->otyp); /* if an oilskin sack, discover it; doesn't
                                    * matter for chest, large box, ice box */
@@ -5738,7 +5810,7 @@ untrap_box(
         else
             pline("There's a trap on %s.", the(xname(box)));
         box->tknown = 1;
-        box->dknown = 1;
+        observe_object(box);
         if (!confused)
             exercise(A_WIS, TRUE);
 
@@ -6400,7 +6472,7 @@ chest_trap(
         bot(); /* to get immediate botl re-display */
     }
 
-    otmp->tknown = 1; /* hero knows chest is no longer trapped */
+    obj->tknown = 1; /* hero knows chest is no longer trapped */
     return FALSE;
 }
 
@@ -6472,7 +6544,7 @@ conjoined_pits(
         return FALSE;
     dx = sgn(trap2->tx - trap1->tx);
     dy = sgn(trap2->ty - trap1->ty);
-    diridx = xytod(dx, dy);
+    diridx = xytodir(dx, dy);
     if (diridx != DIR_ERR) {
         adjidx = DIR_180(diridx);
         if ((trap1->conjoined & (1 << diridx))
@@ -6513,7 +6585,7 @@ adj_nonconjoined_pit(struct trap *adjtrap)
 
     if (trap_with_u && adjtrap && u.utrap && u.utraptype == TT_PIT
         && is_pit(trap_with_u->ttyp) && is_pit(adjtrap->ttyp)) {
-        if (xytod(u.dx, u.dy) != DIR_ERR)
+        if (xytodir(u.dx, u.dy) != DIR_ERR)
             return TRUE;
     }
     return FALSE;

@@ -98,22 +98,22 @@ cell_t undefined_cell = { CONSOLE_UNDEFINED_CHARACTER,
                           CONSOLE_UNDEFINED_ATTRIBUTE };
 #else /* VIRTUAL_TERMINAL_SEQUENCES */
 cell_t clear_cell = {
-	        { CONSOLE_CLEAR_CHARACTER, 0, 0, 0, 0, 0, 0 },
+                { CONSOLE_CLEAR_CHARACTER, 0, 0, 0, 0, 0, 0 },
                 CONSOLE_CLEAR_CHARACTER,         /* wcharacter */
-		0,                               /* attr */
-		0L,                              /* color24 */
-		0,                               /* color256idx */
-		"\x1b[0m",                       /* bkcolorseq */
-		0                                /* colorseq */
+                0,                               /* attr */
+                0L,                              /* color24 */
+                0,                               /* color256idx */
+                "\x1b[0m",                       /* bkcolorseq */
+                0                                /* colorseq */
 };
 cell_t undefined_cell = {
-		{ CONSOLE_UNDEFINED_CHARACTER, 0, 0, 0, 0, 0, 0 },
+               { CONSOLE_UNDEFINED_CHARACTER, 0, 0, 0, 0, 0, 0 },
                 CONSOLE_UNDEFINED_CHARACTER,     /* wcharacter */
-		0,                               /* attr */
-		0L,                              /* color24 */
-		0,                               /* color256idx */
-		(const char *) 0,                /* bkcolorseq */
-		(const char *) 0                 /* colorseq */
+                0,                               /* attr */
+                0L,                              /* color24 */
+                0,                               /* color256idx */
+                (const char *) 0,                /* bkcolorseq */
+                (const char *) 0                 /* colorseq */
 };
 #if 0
 static const uint8 empty_utf8str[MAX_UTF8_SEQUENCE] = { 0 };
@@ -156,7 +156,6 @@ static boolean check_font_widths(void);
 #endif
 static void set_known_good_console_font(void);
 static void restore_original_console_font(void);
-extern void safe_routines(void);
 void tty_ibmgraphics_fixup(void);
 #ifdef VIRTUAL_TERMINAL_SEQUENCES
 extern void (*ibmgraphics_mode_callback)(void);  /* symbols.c */
@@ -763,7 +762,7 @@ emit_stop_inverse(void)
 #define tcfmtstr256 "\x1b[38;5;%ldm"
 #else
 #define tcfmtstr24bit "\x1b[38:2:%ld:%ld:%ldm"
-#define tcfmtstr256 "\x1b[38:5:%dm"
+#define tcfmtstr256 "\x1b[38:5:%ldm"
 #endif
 
 void
@@ -771,7 +770,8 @@ emit_start_256color(int u256coloridx)
 {
     DWORD unused;
     static char tcolorbuf[QBUFSZ];
-    Snprintf(tcolorbuf, sizeof tcolorbuf, tcfmtstr256, u256coloridx);
+    Snprintf(tcolorbuf, sizeof tcolorbuf, tcfmtstr256,
+             (long) u256coloridx);
     WriteConsoleA(console.hConOut, (LPCSTR) tcolorbuf,
                   (int) strlen(tcolorbuf), &unused, NULL);
 }
@@ -783,9 +783,9 @@ emit_start_24bitcolor(long color24bit)
     static char tcolorbuf[QBUFSZ];
     uint32 mcolor = COLORVAL(color24bit);
     Snprintf(tcolorbuf, sizeof tcolorbuf, tcfmtstr24bit,
-             ((mcolor >> 16) & 0xFF),   /* red */
-             ((mcolor >>  8) & 0xFF),   /* green */
-             ((mcolor >>  0) & 0xFF));  /* blue */
+             (long) ((mcolor >> 16) & 0xFF),   /* red */
+             (long) ((mcolor >>  8) & 0xFF),   /* green */
+             (long) ((mcolor >>  0) & 0xFF));  /* blue */
     WriteConsoleA(console.hConOut, (LPCSTR) tcolorbuf,
                   (int) strlen(tcolorbuf), &unused, NULL);
 }
@@ -870,7 +870,8 @@ back_buffer_flip(void)
                     do_anything |= do_wide_content;
             } else {
 #endif
-                if (strcmp((const char *) back->utf8str,
+                if (back->utf8str && front->utf8str
+                    && strcmp((const char *) back->utf8str,
                            (const char *) front->utf8str))
                     do_anything |= do_utf8_content;
 #ifdef UTF8_FROM_CORE
@@ -1145,7 +1146,7 @@ CtrlHandler(DWORD ctrltype)
     case CTRL_BREAK_EVENT:
         term_clear_screen();
         FALLTHROUGH;
-	/* FALLTHRU */
+        /* FALLTHRU */
     case CTRL_CLOSE_EVENT:
     case CTRL_LOGOFF_EVENT:
     case CTRL_SHUTDOWN_EVENT:
@@ -1184,17 +1185,18 @@ consoletty_open(int mode UNUSED)
     really_move_cursor();
     nhUse(debugvar);
 }
+extern void set_emergency_io(void);
 
 void
 consoletty_exit(void)
 {
-    /* go back to using the safe routines */
-    safe_routines();
     free_custom_colors();
     free((genericptr_t) console.front_buffer);
     free((genericptr_t) console.back_buffer);
+    console.front_buffer = console.back_buffer = 0;
     free((genericptr_t) console.localestr);
     free((genericptr_t) console.orig_localestr);
+    set_emergency_io();
 }
 
 int
@@ -1307,8 +1309,8 @@ really_move_cursor(void)
             oldtitle[39] = '\0';
         }
         Snprintf(newtitle, sizeof newtitle,
-		 "%-55s tty=(%02d,%02d) consoletty=(%02d,%02d)",
-		 oldtitle,
+                 "%-55s tty=(%02d,%02d) consoletty=(%02d,%02d)",
+                 oldtitle,
                  ttyDisplay->curx, ttyDisplay->cury,
                  console.cursor.X, console.cursor.Y);
         (void) SetConsoleTitle(newtitle);
@@ -1493,7 +1495,7 @@ console_g_putch(int in_ch)
 #else /* VIRTUAL_TERMINAL_SEQUENCES */
     ccount = 0;
     WCHAR wch[2];
-    boolean usemap = (ch >= 0 && ch < SIZE(console.cpMap));
+    boolean usemap = (ch >= 0 && ((int) ch < SIZE(console.cpMap)));
 #endif /* VIRTUAL_TERMINAL_SEQUENCES */
 
     set_console_cursor(ttyDisplay->curx, ttyDisplay->cury);
@@ -2543,11 +2545,18 @@ void early_raw_print(const char *s)
  *
  */
 
+
+DISABLE_WARNING_CONDEXPR_IS_CONSTANT
+
 void nethack_enter_consoletty(void)
 {
+    int width;
 #ifdef VIRTUAL_TERMINAL_SEQUENCES
     char buf[BUFSZ], *bp, *localestr;
     BOOL apisuccess;
+//    DWORD unused;
+//    int i = 0;
+
 #endif /* VIRTUAL_TERMINAL_SEQUENCES */
 #if 0
     /* set up state needed by early_raw_print() */
@@ -2561,13 +2570,41 @@ void nethack_enter_consoletty(void)
                   GetWindowLong(console.hWnd, GWL_STYLE)
                      & ~WS_MAXIMIZEBOX & ~WS_SIZEBOX);
 #endif
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
+        /* srWindow identifies the visible area; dwSize identifies the buffer
+         */
+        width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+#ifdef DEBUG
+        if (NH_DEVEL_STATUS != NH_STATUS_RELEASED)
+            fprintf(stdout, "width = %d\n", width);
+#endif
+    }
+
     console.hConOut = GetStdHandle(STD_OUTPUT_HANDLE);
     nhassert(console.hConOut != NULL); // NOTE: this assert will not print
+    GetConsoleScreenBufferInfo(console.hConOut, &console.orig_csbi);
+    //COORD screencheck = GetLargestConsoleWindowSize(console.hConOut);
+
+    GetConsoleMode(console.hConOut, &console.orig_out_cmode);
+    console.out_cmode = console.orig_out_cmode;
+    console.out_cmode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    SetConsoleMode(console.hConOut, console.out_cmode);
+#if 0
+    /* tests */
+    WriteConsoleA(console.hConOut, "\033[8;;133t",9, &unused, NULL);
+    for (i = 0; i < 13; ++i) {
+        WriteConsoleA(console.hConOut, "0123456789", 10, &unused, NULL);
+    }
+    WriteConsoleA(console.hConOut, "\033[3;133ftest", 12, &unused, NULL);
     GetConsoleScreenBufferInfo(console.hConOut, &console.orig_csbi);
     /* Testing of widths != COLNO has not turned up any problems.  Need
      * to do a bit more testing and then we are likely to enable having
      * console width match window width.
      */
+#endif
+
 #if 0
     console.width = console.orig_csbi.srWindow.Right -
                      console.orig_csbi.srWindow.Left + 1;
@@ -2589,19 +2626,19 @@ void nethack_enter_consoletty(void)
 
 
     /* clear the entire console buffer */
-    int size = console.orig_csbi.dwSize.X * console.orig_csbi.dwSize.Y;
-    DWORD unused;
-    set_console_cursor(0, 0);
-    FillConsoleOutputAttribute(
-        console.hConOut, CONSOLE_CLEAR_ATTRIBUTE,
-        size, console.cursor, &unused);
+    //int size = console.orig_csbi.dwSize.X * console.orig_csbi.dwSize.Y;
+    //DWORD unused;
+    //set_console_cursor(0, 0);
+  //  FillConsoleOutputAttribute(
+  //      console.hConOut, CONSOLE_CLEAR_ATTRIBUTE,
+  //      size, console.cursor, &unused);
 
-    FillConsoleOutputCharacter(
-        console.hConOut, CONSOLE_CLEAR_CHARACTER,
-        size, console.cursor, &unused);
+  //  FillConsoleOutputCharacter(
+  //      console.hConOut, CONSOLE_CLEAR_CHARACTER,
+  //      size, console.cursor, &unused);
 
-    set_console_cursor(1, 0);
-    SetConsoleCursorPosition(console.hConOut, console.cursor);
+    //set_console_cursor(1, 0);
+    //SetConsoleCursorPosition(console.hConOut, console.cursor);
 
     /* At this point early_raw_print will work */
 
@@ -2744,6 +2781,9 @@ void nethack_enter_consoletty(void)
     console.is_ready = TRUE;
     nhUse(apisuccess);
 }
+
+RESTORE_WARNING_CONDEXPR_IS_CONSTANT
+
 #endif /* TTY_GRAPHICS */
 
 /* this is used as a printf() replacement when the window
@@ -2756,7 +2796,7 @@ VA_DECL(const char *, fmt)
     VA_START(fmt);
     VA_INIT(fmt, const char *);
     (void) vsnprintf(buf, sizeof buf, fmt, VA_ARGS);
-    if (redirect_stdout)
+    if (redirect_stdout || program_state.early_options)
         fprintf(stdout, "%s", buf);
     else {
 #ifdef TTY_GRAPHICS

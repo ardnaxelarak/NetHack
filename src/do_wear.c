@@ -52,6 +52,7 @@ staticfn int takeoff_ok(struct obj *);
 /* maybe_destroy_armor() may return NULL */
 staticfn struct obj *maybe_destroy_armor(struct obj *, struct obj *,
                                        boolean *) NONNULLARG3;
+staticfn int obj_erode_type(struct obj *) NONNULLARG1;
 staticfn boolean better_not_take_that_off(struct obj *) NONNULLARG1;
 
 /* plural "fingers" or optionally "gloves" */
@@ -671,7 +672,7 @@ Gloves_off(void)
     }
     setworn((struct obj *) 0, W_ARMG);
     svc.context.takeoff.cancelled_don = FALSE;
-    (void) encumber_msg(); /* immediate feedback for GoP */
+    encumber_msg(); /* immediate feedback for GoP */
 
     /* usually can't remove gloves when they're slippery but it can
        be done by having them fall off (polymorph), stolen, or
@@ -705,10 +706,12 @@ Shield_on(void)
 {
     /* no shield currently requires special handling when put on, but we
        keep this uncommented in case somebody adds a new one which does
-       [reflection is handled by setting u.uprops[REFLECTION].extrinsic
+       [the magical shields are handled by setting u.uprops[*].extrinsic
        in setworn() called by armor_or_accessory_on() before Shield_on()] */
     switch (uarms->otyp) {
     case SMALL_SHIELD:
+    case SHIELD_OF_DRAIN_RESISTANCE:
+    case SHIELD_OF_SHOCK_RESISTANCE:
     case ELVEN_SHIELD:
     case URUK_HAI_SHIELD:
     case ORCISH_SHIELD:
@@ -735,6 +738,8 @@ Shield_off(void)
        keep this uncommented in case somebody adds a new one which does */
     switch (uarms->otyp) {
     case SMALL_SHIELD:
+    case SHIELD_OF_DRAIN_RESISTANCE:
+    case SHIELD_OF_SHOCK_RESISTANCE:
     case ELVEN_SHIELD:
     case URUK_HAI_SHIELD:
     case ORCISH_SHIELD:
@@ -1196,12 +1201,12 @@ learnring(struct obj *ring, boolean observed)
            mark this ring as having been seen (no need for makeknown);
            otherwise if we have seen this ring, discover its type */
         if (objects[ringtype].oc_name_known)
-            ring->dknown = 1;
+            observe_object(ring);
         else if (ring->dknown)
             makeknown(ringtype);
 #if 0 /* see learnwand() */
         else
-            ring->eknown = 1;
+            observe_object(ring);
 #endif
     }
 
@@ -1783,7 +1788,7 @@ armor_or_accessory_off(struct obj *obj)
                     Strcat(what, " and ");
                 Strcat(what, suit_simple_name(uarm));
             }
-            Snprintf(why, sizeof(why), " without taking off your %s first",
+            Snprintf(why, sizeof why, " without taking off your %s first",
                      what);
         } else {
             Strcpy(why, "; it's embedded");
@@ -1841,12 +1846,27 @@ dotakeoff(void)
             pline("Not wearing any armor or accessories.");
         return ECMD_OK;
     }
-    if (Narmorpieces != 1 || ParanoidRemove || cmdq_peek(CQ_CANNED))
+    if (Narmorpieces != 1 || ParanoidRemove || gi.item_action_in_progress)
         otmp = getobj("take off", takeoff_ok, GETOBJ_NOFLAGS);
     if (!otmp)
         return ECMD_CANCEL;
 
     return armor_or_accessory_off(otmp);
+}
+
+/* 'i' or 'I[' followed by <invlet> and then 'T';
+   plain dotakeoff() would not give any feedback when picking suit
+   covered by cloak, or shirt covered by suit and/or cloak, due to the
+   default behavior of equip_ok() (skipping inaccessible items) */
+int
+ia_dotakeoff(void)
+{
+    int res;
+
+    gi.item_action_in_progress = TRUE;
+    res = dotakeoff();
+    gi.item_action_in_progress = FALSE;
+    return res;
 }
 
 /* the #remove command - take off ring or other accessory */
@@ -3176,9 +3196,9 @@ maybe_destroy_armor(struct obj *armor, struct obj *atmp, boolean *resisted)
     return (struct obj *) 0;
 }
 
-/* hit by destroy armor scroll/black dragon breath/monster spell */
+/* hit by destroy armor scroll/black dragon breath */
 int
-destroy_arm(struct obj *atmp)
+disintegrate_arm(struct obj *atmp)
 {
     struct obj *otmp = (struct obj *) 0;
     boolean losing_gloves = FALSE, resisted = FALSE,
@@ -3235,6 +3255,66 @@ destroy_arm(struct obj *atmp)
     return 1;
 }
 
+/* return ERODE_foo erosion type which can apply to object */
+staticfn int
+obj_erode_type(struct obj *otmp)
+{
+    if (is_flammable(otmp))
+        return ERODE_BURN;
+    else if (is_rustprone(otmp))
+        return ERODE_RUST;
+    else if (is_crackable(otmp))
+        return ERODE_CRACK;
+    else if (is_rottable(otmp))
+        return ERODE_ROT;
+    else if (is_corrodeable(otmp))
+        return ERODE_CORRODE;
+    return ERODE_NONE;
+}
+
+/* erode a number of worn armor(s).
+   if the armor is hit when max eroded, destroys it. */
+int
+destroy_arm(void)
+{
+    struct obj *armors[7] = { NULL };
+    struct obj *otmp;
+    int i, idx = 0, hits = rn2(4) + 1;
+    int ret = 0;
+
+    /* gather worn armor; include non-erodeable ones */
+    if (uarm) armors[idx++] = uarm;
+    if (uarmc) armors[idx++] = uarmc;
+    if (uarmh) armors[idx++] = uarmh;
+    if (uarms) armors[idx++] = uarms;
+    if (uarmg) armors[idx++] = uarmg;
+    if (uarmf) armors[idx++] = uarmf;
+    if (uarmu) armors[idx++] = uarmu;
+    if (!idx)
+        return 0;
+
+    for (i = 0; i < hits; i++) {
+        otmp = armors[rn2(idx)];
+
+        if (erosion_matters(otmp) && is_damageable(otmp) && !otmp->oerodeproof) {
+            int erosion = obj_erode_type(otmp);
+
+            if (erosion != ERODE_NONE) {
+                int r = erode_obj(otmp, xname(otmp), erosion, EF_PAY|EF_DESTROY);
+
+                if (r != ER_NOTHING)
+                    ret = 1;
+                if (r == ER_DESTROYED)
+                    break;
+            }
+        }
+    }
+
+    if (ret)
+        stop_occupation();
+    return ret;
+}
+
 void
 adj_abon(struct obj *otmp, schar delta)
 {
@@ -3256,14 +3336,14 @@ adj_abon(struct obj *otmp, schar delta)
 }
 
 /* decide whether a worn item is covered up by some other worn item,
-   used for dipping into liquid and applying grease;
+   used for dipping into liquid and applying grease and takeoff_ok();
    some criteria are different than select_off()'s */
 boolean
-inaccessible_equipment(struct obj *obj,
-                       const char *verb, /* "dip" or "grease", or null to
-                                             avoid messages */
-                       boolean only_if_known_cursed) /* ignore covering unless
-                                                        known to be cursed */
+inaccessible_equipment(
+    struct obj *obj,
+    const char *verb, /* "dip" or "grease", or null to avoid messages */
+    boolean only_if_known_cursed) /* ignore covering unless it is known to
+                                   * be cursed */
 {
     static NEARDATA const char need_to_take_off_outer_armor[] =
         "need to take off %s to %s %s.";
@@ -3315,6 +3395,8 @@ inaccessible_equipment(struct obj *obj,
     }
     /* item is not inaccessible */
     return FALSE;
+
+#undef BLOCKSACCESS
 }
 
 /* not a getobj callback - unifies code among the other 4 getobj callbacks */
@@ -3354,9 +3436,11 @@ equip_ok(struct obj *obj, boolean removing, boolean accessory)
      * can't be worn because the slot is filled with something else. */
 
     /* removing inaccessible equipment */
-    if (removing && inaccessible_equipment(obj, (const char *) 0,
-                                           (obj->oclass == RING_CLASS)))
-        return GETOBJ_EXCLUDE_INACCESS;
+    if (removing && !gi.item_action_in_progress) {
+        if (inaccessible_equipment(obj, (const char *) 0,
+                                   (obj->oclass == RING_CLASS)))
+            return GETOBJ_EXCLUDE_INACCESS;
+    }
 
     /* all good to go */
     return GETOBJ_SUGGEST;

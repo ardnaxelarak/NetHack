@@ -1,4 +1,4 @@
-/* NetHack 3.7	read.c	$NHDT-Date: 1715889745 2024/05/16 20:02:25 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.308 $ */
+/* NetHack 3.7	read.c	$NHDT-Date: 1762577372 2025/11/07 20:49:32 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.323 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -22,6 +22,7 @@ staticfn int maybe_tame(struct monst *, struct obj *);
 staticfn boolean can_center_cloud(coordxy, coordxy);
 staticfn void display_stinking_cloud_positions(boolean);
 staticfn void seffect_enchant_armor(struct obj **);
+staticfn boolean disintegrate_cursed_armor(void);
 staticfn void seffect_destroy_armor(struct obj **);
 staticfn void seffect_confuse_monster(struct obj **);
 staticfn void seffect_scare_monster(struct obj **);
@@ -1187,12 +1188,40 @@ seffect_enchant_armor(struct obj **sobjp)
         useup(otmp);
         return;
     }
-    s = scursed ? -1
-        : (otmp->spe >= 9)
-        ? (rn2(otmp->spe) == 0)
-        : sblessed
-        ? rnd(3 - otmp->spe / 3)
-        : 1;
+    if (s < -100)
+        s = -100; /* avoid integer overflow with very negative armor */
+
+    /* Base power of the enchantment:
+
+       2 for -1 to +0 armor;
+       1 for +1 to +2 armor;
+       0 for +3 to +4 armor, etc.
+
+       When disenchanting, everything is done with reversed signs. */
+    s = (4 - s) / 2;
+
+    /* Elven/artifact and nonmagical armor is easier to enchant;
+       blessed scrolls are more effective. */
+    if (special_armor)
+        ++s;
+    if (!objects[otmp->otyp].oc_magic)
+        ++s;
+    if (sblessed)
+        ++s;
+
+    if (s <= 0) {
+        s = 0;
+        if (otmp->spe > 0 && !rn2(otmp->spe))
+            s = 1;
+    } else {
+        s = rnd(s);
+    }
+    if (s > 11)
+        s = 11;    /* unlikely but possible: avoids an overflow later */
+
+    if (scursed)
+        s = -s;
+
     if (s >= 0 && Is_dragon_scales(otmp)) {
         unsigned was_lit = otmp->lamplit;
         int old_light = artifact_light(otmp) ? arti_light_radius(otmp) : 0;
@@ -1260,6 +1289,37 @@ seffect_enchant_armor(struct obj **sobjp)
               Blind ? "again" : "unexpectedly");
 }
 
+/* destroy a random cursed armor worn by hero */
+staticfn boolean
+disintegrate_cursed_armor(void)
+{
+    struct obj *armors[10];
+    int idx = 0;
+
+    armors[0] = NULL;
+    if (uarm && uarm->cursed)
+        armors[idx++] = uarm;
+    if (uarmc && uarmc->cursed)
+        armors[idx++] = uarmc;
+    if (uarmh && uarmh->cursed)
+        armors[idx++] = uarmh;
+    if (uarms && uarms->cursed)
+        armors[idx++] = uarms;
+    if (uarmg && uarmg->cursed)
+        armors[idx++] = uarmg;
+    if (uarmf && uarmf->cursed)
+        armors[idx++] = uarmf;
+    if (uarmu && uarmu->cursed)
+        armors[idx++] = uarmu;
+    if (!idx)
+        return FALSE;
+
+    if (disintegrate_arm(armors[rn2(idx)]))
+        return TRUE;
+
+    return FALSE;
+}
+
 staticfn void
 seffect_destroy_armor(struct obj **sobjp)
 {
@@ -1289,7 +1349,21 @@ seffect_destroy_armor(struct obj **sobjp)
         otmp->oerodeproof = new_erodeproof ? 1 : 0;
         return;
     }
-    if (!scursed || !otmp || !otmp->cursed) {
+
+    if (scursed) {
+        if (otmp && otmp->cursed) {
+            /* armor and scroll both cursed */
+            pline("%s.", Yobjnam2(otmp, "vibrate"));
+            if (otmp->spe >= -6) {
+                otmp->spe += -1;
+                adj_abon(otmp, -1);
+            }
+            make_stunned((HStun & TIMEOUT) + (long) rn1(10, 10), TRUE);
+        } else if (disintegrate_arm(otmp)) {
+            gk.known = TRUE;
+            return;
+        }
+    } else {
         boolean gets_choice = (otmp && sobj && sobj->blessed
                                && count_worn_armor() > 1);
 
@@ -1303,9 +1377,14 @@ seffect_destroy_armor(struct obj **sobjp)
             /* check the return value, if user picked non-valid obj */
             if (any_worn_armor_ok(atmp) == GETOBJ_SUGGEST)
                 otmp = atmp;
-        }
-
-        if (!destroy_arm(otmp)) {
+            if (disintegrate_arm(otmp)) {
+                gk.known = TRUE;
+                return;
+            }
+        } else if (sobj->blessed && disintegrate_cursed_armor()) {
+            gk.known = TRUE;
+            return;
+        } else if (!destroy_arm()) {
             strange_feeling(sobj, "Your skin itches.");
             *sobjp = 0; /* useup() in strange_feeling() */
             exercise(A_STR, FALSE);
@@ -1313,13 +1392,6 @@ seffect_destroy_armor(struct obj **sobjp)
             return;
         } else
             gk.known = TRUE;
-    } else { /* armor and scroll both cursed */
-        pline("%s.", Yobjnam2(otmp, "vibrate"));
-        if (otmp->spe >= -6) {
-            otmp->spe += -1;
-            adj_abon(otmp, -1);
-        }
-        make_stunned((HStun & TIMEOUT) + (long) rn1(10, 10), TRUE);
     }
 }
 
@@ -1559,6 +1631,7 @@ seffect_enchant_weapon(struct obj **sobjp)
     boolean scursed = sobj->cursed;
     boolean confused = (Confusion != 0);
     boolean old_erodeproof, new_erodeproof;
+    int s;
 
     /* [What about twoweapon mode?  Proofing/repairing/enchanting both
        would be too powerful, but shouldn't we choose randomly between
@@ -1591,11 +1664,12 @@ seffect_enchant_weapon(struct obj **sobjp)
         uwep->oerodeproof = new_erodeproof ? 1 : 0;
         return;
     }
-    if (!chwepon(sobj, scursed ? -1
-                 : !uwep ? 1
-                 : (uwep->spe >= 9) ? !rn2(uwep->spe)
-                 : sblessed ? rnd(3 - uwep->spe / 3)
-                 : 1))
+    s = scursed ? -1
+        : !uwep ? 1 /* guard further tests against null pointer */
+          : (uwep->spe >= 9) ? (rn2(uwep->spe) == 0) /* usually 0, maybe  1 */
+            : sblessed ? rnd(3 - uwep->spe / 3) /* >= 9 case prevents rnd(0) */
+              : 1; /* uncursed */
+    if (!chwepon(sobj, s))
         *sobjp = 0; /* nothing enchanted: strange_feeling -> useup */
     if (uwep)
         cap_spe(uwep);
@@ -2755,7 +2829,7 @@ do_genocide(
               * 3 = forced genocide of player
               * 5 (4 | 1) = normal genocide from throne */
 {
-    char buf[BUFSZ], promptbuf[QBUFSZ];
+    char buf[BUFSZ], realbuf[BUFSZ], promptbuf[QBUFSZ];
     int i, killplayer = 0;
     int mndx;
     struct permonst *ptr;
@@ -2860,27 +2934,31 @@ do_genocide(
     }
 
     which = "all ";
+    Strcpy(realbuf, ptr->pmnames[NEUTRAL]); /* standard singular */
     if (Hallucination) {
-        if (Upolyd)
+        /* hallucinate hero's type */
+        if (Upolyd) {
             Strcpy(buf, pmname(gy.youmonst.data,
                                flags.female ? FEMALE : MALE));
-        else {
+        } else {
             Strcpy(buf, (flags.female && gu.urole.name.f) ? gu.urole.name.f
-                                                       : gu.urole.name.m);
+                                                          : gu.urole.name.m);
             buf[0] = lowc(buf[0]);
         }
     } else {
-        Strcpy(buf, ptr->pmnames[NEUTRAL]); /* standard singular */
+        /* use actual type */
+        Strcpy(buf, realbuf);
         if ((ptr->geno & G_UNIQ) && ptr != &mons[PM_HIGH_CLERIC])
             which = !type_is_pname(ptr) ? "the " : "";
     }
+
     if (how & REALLY) {
         if (!num_genocides())
             livelog_printf(LL_CONDUCT | LL_GENOCIDE,
                            "performed %s first genocide (%s)",
-                           uhis(), makeplural(buf));
+                           uhis(), makeplural(realbuf));
         else
-            livelog_printf(LL_GENOCIDE, "genocided %s", makeplural(buf));
+            livelog_printf(LL_GENOCIDE, "genocided %s", makeplural(realbuf));
 
         /* setting no-corpse affects wishing and random tin generation */
         svm.mvitals[mndx].mvflags |= (G_GENOD | G_NOCORPSE);
@@ -2902,13 +2980,13 @@ do_genocide(
             }
 
             /* Polymorphed characters will die as soon as they're rehumanized.
-             */
-            /* KMH -- Unchanging prevents rehumanization */
+               KMH -- Unchanging prevents rehumanization. */
             if (Upolyd && ptr != gy.youmonst.data) {
                 delayed_killer(POLYMORPH, svk.killer.format, svk.killer.name);
                 You_feel("%s inside.", udeadinside());
-            } else
+            } else {
                 done(GENOCIDED);
+            }
         } else if (ptr == gy.youmonst.data) {
             rehumanize();
         }

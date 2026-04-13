@@ -1,4 +1,4 @@
-.\" $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.598 $ $NHDT-Date: 1745139202 2025/04/20 00:53:22 $
+.\" $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.614 $ $NHDT-Date: 1770881338 2026/02/11 23:28:58 $
 .\"
 .\" This is an excerpt from the 'roff' man page from the 'groff' package.
 .\"+--
@@ -31,8 +31,21 @@
 .lt 70n
 .\}
 .
-.so tmac.nh \" extra macros which aren't in tmac.n
-.if !\n(nH .so doc/tmac.nh
+.\" Load extra macros that "tmac.n" doesn't define.
+.de So
+.ie \n(.g&(\n(.x=1)&(\n(.y>22) .soquiet \\$1
+.el                            .so      \\$1
+..
+.
+.So tmac.nh
+.if !\n(nH So doc/tmac.nh
+.
+.if !\n(nH \{\
+.tm fatal error: cannot locate "tmac.nh" macro package
+.ab
+.\}
+.
+.rm So
 .
 .\" building Guidebook.txt doesn't have CR font available; groff 1.23 issues
 .\" a warning each time any font can't be loaded; earlier versions silently
@@ -47,7 +60,7 @@
 .ds f0 \*(vr
 .ds f1 \" empty
 .\"DO NOT REMOVE NH_DATESUB .ds f2 Date(%B %-d, %Y)
-.ds f2 May 1, 2025
+.ds f2 March 25, 2026
 .
 .\" A note on some special characters:
 .\" \(lq = left double quote
@@ -131,7 +144,8 @@ will vary with your background and training:
 .pg
 \fIArcheologists\fP understand dungeons pretty well; this enables them
 to move quickly and sneak up on the local nasties.  They start equipped
-with the tools for a proper scientific expedition.
+with the tools for a proper scientific expedition, and are able to read
+ancient languages.
 .pg
 \fIBarbarians\fP are warriors out of the hinterland, hardened to battle.
 They begin their quests with naught but uncommon strength, a trusty hauberk,
@@ -1233,6 +1247,9 @@ Autocompletes.
 Default key is \(oqM-A\(cq, and also \(oq\(haN\(cq if
 .op number_pad
 is on.
+.lp ""
+Preceding #annotate with the \(oqm\(cq prefix is the same as
+#overview with the prefix.
 .lp "#apply   "
 Apply (use) a tool such as a pick-axe, a key, or a lamp.
 Default key is \(oqa\(cq.
@@ -1268,6 +1285,7 @@ Talk to someone.
 Default key is \(oqM-c\(cq.
 .lp "#chronicle"
 Show a list of important game events.
+Default key is \(oqv\(cq.
 .lp "#close   "
 Close a door.
 Default key is \(oqc\(cq.
@@ -1368,7 +1386,6 @@ option is On, clicking on the hero (or steed when mounted) will
 execute this command.
 .lp "#history "
 Show long version and game history.
-Default key is \(oqV\(cq.
 .lp #inventory
 Show your inventory.
 Default key is \(oqi\(cq.
@@ -1740,6 +1757,18 @@ floor container menu.
 .lp ""
 Autocompletes.
 Default key is \(oqM-T\(cq.
+.lp "#toggle  "
+Toggle a boolean option on or off.
+Requires a parameter in parenthesis, the name of the option to toggle.
+The option must be settable in-game.
+.lp ""
+For example:
+.sd
+.ft CR
+BIND=':toggle(price_quotes)
+BIND=@:toggle(autopickup)
+.ft
+.ed
 .lp "#travel  "
 Travel to a specific location on the map.
 Default key is \(oq_\(cq. \" underscore
@@ -1809,7 +1838,7 @@ Default key is \(oqM-v\(cq.
 .lp #versionshort
 Show the program's version number, plus the date and time that the
 running copy was built from sources (not the version's release date).
-Default key is \(oqv\(cq.
+Default key is \(oqV\(cq.
 .lp "#vision  "
 Show vision array.
 Autocompletes.
@@ -1909,6 +1938,7 @@ Wish for something.
 Autocompletes.
 Debug mode only.
 Default key is \(oq\(haW\(cq.
+Precede this command with the \(oq\f(CRm\fP\(cq prefix to show a wish history menu.
 .lp "#wmode   "
 Show wall modes.
 Autocompletes.
@@ -2581,6 +2611,56 @@ Sometimes the bless or curse state of objects is referred to as their
 or \(lq\f(CRBUCX\fP\(rq for Blessed, Uncursed, Cursed, or unknown.
 (The term \fIbeatitude\fP is occasionally used as well.)
 .hn 2
+Artifacts
+.pg
+Some objects have been imbued with special powers and are known as
+\fBArtifacts\fP.
+They have specific types (such as long sword or orcish dagger) and distinct
+names such as \fIGiantslayer\fP or \fIGrimtooth\fP.
+Artifact weapons typically do more damage than their ordinary counterparts.
+Some do extra damage against all monsters, others only against specific
+types of monsters so aren't better than regular weapons against other types.
+Some confer defensive capabilities when wielded or have other powers that
+aren't listed here.
+.pg
+You might find them simply lying on the floor, including but not limited
+to inside shops, or be granted as a reward for \(lq#offer\(rq on an
+altar to your patron deity.
+A few might be dropped by monsters, or might be converted from an ordinary
+object of the same type via assigning the right name.
+.\" should we mention dipping for Excalibur here?
+Or you might wish for them, if you happen to be granted a wish, but such
+wishes can fail.
+.pg
+Some artifacts have a specific alignment, others don't.
+You won't obtain aligned ones that have a different alignment from yours
+via offering and might get a shock if you attempt to wish for any of those
+or find one and attempt to use it.
+.pg
+Each role has a distinct artifact that is contained in the \fIQuest\fP
+dungeon branch.
+These are commonly known as quest artifacts.
+All are aligned and most are non-weapons.
+They won't be found randomly.
+.pg
+The \(oq\f(CR\\\fP\(cq and \(oq\f(CR\`a\fP\(cq commands will
+list artifacts that you have fully identified (knowing the name and item
+type isn't sufficient).
+.hn 2
+Relics
+.pg
+There are three unique items that are named and have limited special
+powers but aren't classified as artifacts.
+Each is guarded by a particular monster and you'll need to collect all
+three for use late in the game.
+.\" The relics are listed in the same order as the Oracle's message about
+.\" them rather than in the order they need to be used for the invocation.
+They are \fIthe Bell of Opening\fP,
+\fIthe Book of the Dead\fP, and
+\fIthe Candelabrum of Invocation\fP.
+Their corresponding descriptions when not yet identified are
+silver bell, papyrus spellbook, and candelabrum.
+.hn 2
 Weapons (\(oq)\(cq)
 .pg
 Given a chance, most monsters in the Mazes of Menace will gratuitously try to
@@ -2925,7 +3005,7 @@ Some objects of subtle enchantment are difficult to identify without these.
 .pg
 A scroll whose label is known can be read even when the hero is blind.
 If a scroll has been discovered, it will be listed in inventory by type
-rather than by label, but the label is known in that situtaion even though
+rather than by label, but the label is known in that situation even though
 it isn't shown.
 .pg
 Many scrolls produce a different effect from usual if they are blessed or
@@ -3322,6 +3402,14 @@ not penalized for being spoken to by an angry god, priest(ess), or
 other religious figure; a true atheist would hear the words but
 attach no special meaning to them.
 .pg
+A pauper starts the game with no possessions, no spells, and no weapon or
+spell skills (and if playing as a knight, your pony will not have a saddle).
+Can only be initiated by starting a new game with \f(CROPTIONS=pauper\fP
+set in your run-time configurtion file or \f(CRNETHACKOPTIONS\fP environment
+variable.
+Once the game is underway, you can acquire and use items, spells, and skills
+in the usual way.
+.pg
 Most players fight with a wielded weapon (or tool intended to be
 wielded as a weapon).  Another challenge is to win the game without
 using such a wielded weapon.  You are still permitted to throw,
@@ -3478,7 +3566,8 @@ the Castle level's drawbridge or can be given to you via prayer boon.
 and \fIPauper\fP are also conducts, and they can only be
 enabled by setting the correspondingly named option in NETHACKOPTIONS
 or run-time configuration file prior to game start.
-In the case of \fIBlind\fP and \fIDeaf\fP, the option also enforces the conduct.
+In the case of \fIBlind\fP and \fIDeaf\fP, the option also enforces the
+conduct.
 They aren't really significant accomplishments unless/until you make
 substantial progress into the dungeon.
 .
@@ -3536,7 +3625,7 @@ is a section marker (the closing \(oq\f(CR]\fP\(cq can be followed
 by whitespace and then an arbitrary comment beginning with \(oq\f(CR#\fP\(cq).
 The text between the square brackets is the section name.
 Section markers are only valid after a CHOOSE directive and their names
-are case insensitive.
+are case-insensitive.
 Lines after a section marker belong to that section up until another
 section starts or a marker without a name is encountered or the file ends.
 Lines within sections are ignored unless a CHOOSE directive has selected
@@ -3664,13 +3753,14 @@ See the \(lqModifying NetHack Symbols\(rq section.
 Example:
 .sd
 \f(CR# replace small punctuation (tick marks) with digits\fP
-\f(CRSYMBOLS=S_boulder:0,S_golem:7\fP
+\f(CRSYMBOLS=S_golem:7\fP
 .ed
 .lp WIZKIT
 Debug mode only:  extra items to add to initial inventory.
 Value is the name of a text file containing a list of item names,
 one per line, up to a maximum of 128 lines.
 Each line is processed by the function that handles wishing.
+Entries are added to the wish history; see the wizwish-command.
 .lp ""
 Example:
 .sd
@@ -3699,7 +3789,8 @@ OPTIONS=color           # Display things in color if possible
 OPTIONS=lit_corridor    # Show lit corridors differently
 OPTIONS=hilite_pet,hilite_pile
 # Replace small punctuation (tick marks) with digits
-SYMBOLS=S_boulder:0,S_golem:7
+OPTIONS=boulder:0
+SYMBOLS=S_golem:7
 #
 # No startup splash screen. Windows GUI only.
 OPTIONS=!splash_screen
@@ -4409,6 +4500,10 @@ The positive (no \(oq!\(cq) and negative (with \(oq!\(cq) entries
 can be intermixed.
 .lp pauper
 Start the character with no possessions (default false).  Persistent.
+.lp ""
+Also start with no spells or skills, which are tied to starting equipment.
+Does not inhibit acquiring and using items, spells, and skills once play
+has started.
 .lp perm_invent
 If true, always display your current inventory in a window (default false).
 .lp ""
@@ -4527,6 +4622,15 @@ user name (on multi-user systems) or specifying a particular character
 name (on single-user systems) or it might be disabled entirely.  Requesting
 it when not allowed or not possible results in explore mode instead.
 Default is normal play.
+.lp price_quotes
+Whenever the game mentions the name of an object you haven't identified yet,
+it also mentions the range of buy and sell prices you have seen for that
+item (to help narrow down what it could be).
+The price shown is the unit price for one item (even when you are looking at
+a stack of multiple items).
+Many players may want to turn this on while identifying objects, and then
+turn it back off again for general play.
+Default is off.
 .lp pushweapon
 Using the \(oqw\(cq (wield) command when already wielding
 something pushes the old item into your alternate weapon slot (default off).
@@ -4555,6 +4659,16 @@ If \f(CRrace\fP is not specified, there is no default value;
 player will be prompted unless role forces a choice for race.
 Cannot be set with the \(oq\f(CRO\fP\(cq command.
 Persistent.
+.lp reroll
+Allows rerolling your character's starting inventory and attributes (default
+false).  Persistent.
+.lp ""
+Note that rerolling your character is not a recommended way to play if aiming
+merely to win (a lucky start has a much smaller influence on whether or not
+you win the game than your actions later in the game).  This option exists
+partly as an acknowledgement that some players will insist on doing so anyway,
+and partly because rerolling may be necessary for certain types of challenge
+games.
 .lp rest_on_space
 Make the space bar a synonym for the \(oq.\(cq (#wait) command (default off).
 Persistent.
@@ -4659,7 +4773,7 @@ or you are making screenshots or streaming video.
 Using the
 .op statuslines:3
 option is recommended so that there will be more room available for
-status information, unless you're using nethack's \fIQt\fP interface
+status information, unless you're using NetHack's \fIQt\fP interface
 or your terminal emulator window displays fewer than 25 lines.
 Persistent.
 .lp "silent  "
@@ -5552,7 +5666,9 @@ change the color or appearance of fields in the status display.
 .pg
 The format for defining status colors is:
 .SD n
-\f(CROPTION=hilite_status:\fIfield-name\fP/\fIbehavior\fP/\fIcolor\fP&\fIattributes\fP\fP
+.\" was "\f(CR...\fI...\fP\fP" but font changes don't nest so final \fP didn't
+.\" restore the pre-\f(CR font; assume that was Roman and explicitly use \fR
+\f(CROPTION=hilite_status:\fIfield-name\fP/\fIbehavior\fP/\fIcolor\fP&\fIattributes\fP\fR
 .ED
 .pg
 For example, the following line in your configuration file will cause

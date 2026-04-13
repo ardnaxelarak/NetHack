@@ -734,9 +734,6 @@ mswin_exit_nhwindows(const char *str)
     /* Write Window settings to the registry */
     mswin_write_reg();
 
-    /* set things back to failsafes */
-    windowprocs = *get_safe_procs(0);
-
     /* and make sure there is still a way to communicate something */
     windowprocs.win_raw_print = mswin_raw_print;
     windowprocs.win_raw_print_bold = mswin_raw_print_bold;
@@ -1248,7 +1245,7 @@ mswin_select_menu(winid wid, int how, MENU_ITEM_P **selected)
 
 /*
     -- Indicate to the window port that the inventory has been changed.
-    -- Merely calls display_inventory() for window-ports that leave the
+    -- Merely calls repopulate_perminvent() for window-ports that leave the
         window up, otherwise empty.
 */
 void
@@ -1257,7 +1254,7 @@ mswin_update_inventory(int arg)
     logDebug("mswin_update_inventory(%d)\n", arg);
     if (iflags.perm_invent && program_state.something_worth_saving
         && iflags.window_inited && WIN_INVEN != WIN_ERR)
-        display_inventory(NULL, FALSE);
+        repopulate_perminvent();
 }
 
 win_request_info *

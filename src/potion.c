@@ -1,4 +1,4 @@
-/* NetHack 3.7	potion.c	$NHDT-Date: 1737605675 2025/01/22 20:14:35 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.274 $ */
+/* NetHack 3.7	potion.c	$NHDT-Date: 1770949988 2026/02/12 18:33:08 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.279 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -666,6 +666,9 @@ peffect_restore_ability(struct obj *otmp)
                WEAK or worse, but that's handled via ATEMP(A_STR) now */
             if (ABASE(i) < lim) {
                 ABASE(i) = lim;
+                /* reset stat abuse (but not exercise) to 0 as well */
+                AEXE(i) = max(AEXE(i), 0);
+
                 disp.botl = TRUE;
                 /* only first found if not blessed */
                 if (!otmp->blessed)
@@ -826,6 +829,10 @@ peffect_invisibility(struct obj *otmp)
     if (otmp->cursed) {
         pline("For some reason, you feel your presence is known.");
         aggravate();
+
+        /* doing this gives temporary invisibility, but removes permanent
+           invisibility */
+        HInvis &= ~FROMOUTSIDE;
     }
 }
 
@@ -833,6 +840,7 @@ staticfn void
 peffect_see_invisible(struct obj *otmp)
 {
     int msg = Invisible && !Blind;
+    int permchance = 10 - (HInvis ? 3 : 0) - (HSee_invisible ? 6 : 0);
 
     gp.potion_unkn++;
     if (otmp->cursed)
@@ -855,7 +863,7 @@ peffect_see_invisible(struct obj *otmp)
          */
         make_blinded(0L, TRUE);
     }
-    if (otmp->blessed)
+    if (otmp->blessed && !rn2(permchance))
         HSee_invisible |= FROMOUTSIDE;
     else
         incr_itimeout(&HSee_invisible, rn1(100, 750));
@@ -1772,12 +1780,22 @@ potionhit(struct monst *mon, struct obj *obj, int how)
                 mon->mconf = TRUE;
             break;
         case POT_INVISIBILITY: {
-            boolean sawit = canspotmon(mon);
+            boolean sawit = canspotmon(mon),
+                    cursed_potion = obj->cursed ? TRUE : FALSE;
 
-            angermon = FALSE;
-            mon_set_minvis(mon);
-            if (sawit && !canspotmon(mon) && cansee(mon->mx, mon->my))
-                map_invisible(mon->mx, mon->my);
+            angermon = mon->minvis && cursed_potion;
+            mon_set_minvis(mon, cursed_potion);
+            if (sawit && !canspotmon(mon)) {
+                if (cansee(mon->mx, mon->my))
+                    map_invisible(mon->mx, mon->my);
+            } else if (sawit && cursed_potion) {
+                pline("%s briefly seems to be transparent.", Monnam(mon));
+                /* see use_misc(muse.c) for comment about map_invisible() */
+            } else if (!sawit && canspotmon(mon)) {
+                /* if an invisible mon glyph was present, mon_set_minvis()'s
+                   newsym() has gotten rid of it */
+                pline("%s appears!", Monnam(mon));
+            }
             break;
         }
         case POT_SLEEPING:
@@ -2732,10 +2750,10 @@ potion_dip(struct obj *obj, struct obj *potion)
         else
             singlepotion->cursed = obj->cursed; /* odiluted left as-is */
         singlepotion->bknown = FALSE;
-        if (Blind) {
-            singlepotion->dknown = FALSE;
-        } else {
-            singlepotion->dknown = !Hallucination;
+        singlepotion->dknown = FALSE; /* provisionally */
+        if (!Blind) {
+            if (!Hallucination)
+                observe_object(singlepotion);
             *newbuf = '\0';
             if (mixture == POT_WATER && singlepotion->dknown)
                 Sprintf(newbuf, "clears");
@@ -2755,7 +2773,7 @@ potion_dip(struct obj *obj, struct obj *potion)
                 struct obj fakeobj;
 
                 fakeobj = cg.zeroobj;
-                fakeobj.dknown = 1;
+                fakeobj.dknown = 1; /* no need to observe_object */
                 fakeobj.otyp = old_otyp;
                 fakeobj.oclass = POTION_CLASS;
                 docall(&fakeobj);

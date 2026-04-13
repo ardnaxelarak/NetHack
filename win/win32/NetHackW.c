@@ -15,10 +15,6 @@
 #include "mhmain.h"
 #include "mhmap.h"
 
-#if !defined(SAFEPROCS)
-#error You must #define SAFEPROCS to build NetHackW.c
-#endif
-
 /* Borland and MinGW redefine "boolean" in shlwapi.h,
    so just use the little bit we need */
 typedef struct _DLLVERSIONINFO {
@@ -70,10 +66,6 @@ int GUILaunched = TRUE;     /* We tell shared startup code in windmain.c
 #define _strdup(s1) strdup(s1)
 #endif
 
-// Forward declarations of functions included in this code module:
-extern boolean main(int, char **);
-//static void __cdecl mswin_moveloop(void *);
-
 #define MAX_CMDLINE_PARAM 255
 
 #ifdef _MSC_VER
@@ -102,32 +94,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
     UNREFERENCED_PARAMETER(nCmdShow);
-
-    /*
-     * Get a set of valid safe windowport function
-     * pointers during early startup initialization.
-     *
-     * When get_safe_procs is called with 0 as the param,
-     * non-functional, but safe function pointers are set
-     * for all windowport routines.
-     *
-     * When get_safe_procs is called with 1 as the param,
-     * raw_print, raw_print_bold, and wait_synch, and nhgetch
-     * are set to use C stdio routines via stdio_raw_print,
-     * stdio_raw_print_bold, stdio_wait_synch, and
-     * stdio_nhgetch.
-     */
-    windowprocs = *get_safe_procs(0);
-
-    /*
-     * Now we are going to override a couple
-     * of the windowprocs functions so that
-     * error messages are handled in a suitable
-     * way for the graphical version.
-     */
-    windowprocs.win_raw_print = mswin_raw_print;
-    windowprocs.win_raw_print_bold = mswin_raw_print_bold;
-    windowprocs.win_wait_synch = mswin_wait_synch;
 
     win10_init();
     early_init(0, NULL);  /* Change as needed to support CRASHREPORT */
@@ -191,7 +157,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
         Sprintf(buf2, "Cannot load common control library.\n%s\n%s",
                 "For further information, refer to the installation notes at",
                 INSTALL_NOTES);
-        panic(buf2);
+        panic("%s", buf2);
     }
     if (major < MIN_COMCTLMAJOR
         || (major == MIN_COMCTLMAJOR && minor < MIN_COMCTLMINOR)) {
@@ -201,7 +167,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
                 MIN_COMCTLMINOR,
                 "For further information, refer to the installation notes at",
                 INSTALL_NOTES);
-        panic(buf2);
+        panic("%s", buf2);
     }
     ZeroMemory(&InitCtrls, sizeof(InitCtrls));
     InitCtrls.dwSize = sizeof(InitCtrls);
@@ -245,6 +211,12 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
         free(savefile);
     }
     GUILaunched = 1;
+    /* emergency IO */
+    windowprocs.win_raw_print = mswin_raw_print;
+    windowprocs.win_raw_print_bold = mswin_raw_print_bold;
+    windowprocs.win_nhgetch = mswin_nhgetch;
+    windowprocs.win_wait_synch = mswin_wait_synch;
+
     /* let nethackw_main do the argument processing */
     nethackw_main(argc, argv);
     /* not reached */

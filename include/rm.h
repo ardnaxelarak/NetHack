@@ -12,8 +12,8 @@
  * building on Don G Kneller's MS-DOS implementation. See drawing.c for
  * the code that permits the user to set the contents of the symbol structure.
  *
- * The door representation was changed by Ari
- * Huttunen(ahuttune@niksula.hut.fi)
+ * The door representation was changed by
+ * Ari Huttunen(ahuttune@niksula.hut.fi).
  */
 
 /*
@@ -454,6 +454,7 @@ struct levelflags {
     Bitfield(stormy, 1);       /* clouds create lightning bolts at random */
 
     schar temperature;         /* +1 == hot, -1 == cold */
+    long stasis_until;         /* wand of stasis effect lasts until when? */
 };
 
 typedef struct {
@@ -476,7 +477,7 @@ typedef struct {
 #define fmon svl.level.monlist
 
 /*
- * Covert a trap number into the defsym graphics array.
+ * Convert a trap number into the defsym graphics array.
  * Convert a defsym number into a trap number.
  * Assumes that arrow trap will always be the first trap.
  */

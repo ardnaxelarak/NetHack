@@ -1,4 +1,4 @@
-/* NetHack 3.7	hack.c	$NHDT-Date: 1736530208 2025/01/10 09:30:08 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.477 $ */
+/* NetHack 3.7	hack.c	$NHDT-Date: 1763708572 2025/11/20 23:02:52 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.494 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Derek S. Ray, 2015. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -104,7 +104,7 @@ obj_to_any(struct obj *obj)
 boolean
 revive_nasty(coordxy x, coordxy y, const char *msg)
 {
-    struct obj *otmp, *otmp2;
+    struct obj *otmp = 0, *otmp2 = 0;
     struct monst *mtmp;
     coord cc;
     boolean revived = FALSE;
@@ -947,7 +947,7 @@ cant_squeeze_thru(struct monst *mon)
     /* lugging too much junk? */
     amt = (mon == &gy.youmonst) ? inv_weight() + weight_cap()
                                : curr_mon_load(mon);
-    if (amt > 600)
+    if (amt > WT_TOOMUCH_DIAGONAL)
         return 2;
 
     /* Sokoban restriction applies to hero only */
@@ -1046,7 +1046,7 @@ test_move(
                     else
                         Sprintf(buf, "impossible [background glyph=%d]",
                                 glyph);
-                    pline_dir(xytod(dx, dy), "It's %s.", buf);
+                    pline_dir(xytodir(dx, dy), "It's %s.", buf);
                 }
             }
             return FALSE;
@@ -1197,7 +1197,7 @@ test_move(
         if (mode != TEST_TRAV && svc.context.run >= 2
             && !(Blind || Hallucination) && !could_move_onto_boulder(x, y)) {
             if (mode == DO_MOVE && flags.mention_walls)
-                pline_dir(xytod(dx,dy), "A boulder blocks your path.");
+                pline_dir(xytodir(dx,dy), "A boulder blocks your path.");
             return FALSE;
         }
         if (mode == DO_MOVE) {
@@ -1834,8 +1834,8 @@ handle_tip(int tip)
     if (!flags.tips)
         return FALSE;
 
-    if (tip >= 0 && tip < NUM_TIPS && !svc.context.tips[tip]) {
-        svc.context.tips[tip] = TRUE;
+    if (tip >= 0 && tip < NUM_TIPS && !(svc.context.tips & (1 << tip))) {
+        svc.context.tips |= (1 << tip);
         /* the "Tip:" prefix is a hint to use of OPTIONS=!tips to suppress */
         switch (tip) {
         case TIP_ENHANCE:
@@ -1886,7 +1886,7 @@ swim_move_danger(coordxy x, coordxy y)
             || liquid_wall) {
             if (svc.context.nopick) {
                 /* moving with m-prefix */
-                svc.context.tips[TIP_SWIM] = TRUE;
+                svc.context.tips |= (1 << TIP_SWIM);
                 return FALSE;
             } else if (ParanoidSwim || liquid_wall) {
                 You("avoid %s into the %s.",
@@ -2425,7 +2425,10 @@ avoid_moving_on_trap(coordxy x, coordxy y, boolean msg)
 {
     struct trap *trap;
 
-    if ((trap = t_at(x, y)) && trap->tseen) {
+    if ((trap = t_at(x, y)) && trap->tseen
+        /* the vibrating square is implemented as a trap but treated as if
+           it were a type of terrain */
+        && trap->ttyp != VIBRATING_SQUARE) {
         if (msg && flags.mention_walls) {
             set_msg_xy(x, y);
             You("stop in front of %s.",
@@ -2579,7 +2582,7 @@ move_out_of_bounds(coordxy x, coordxy y)
                     dy = 0;
             }
             You("have already gone as far %s as possible.",
-                directionname(xytod(dx, dy)));
+                directionname(xytodir(dx, dy)));
         }
         nomul(0);
         svc.context.move = 0;
@@ -3379,7 +3382,7 @@ char *
 in_rooms(coordxy x, coordxy y, int typewanted)
 {
     static char buf[5];
-    char rno, *ptr = &buf[4];
+    char rno = 0, *ptr = &buf[4];
     int typefound, min_x, min_y, max_x, max_y_offset, step;
     struct rm *lev;
 
@@ -4123,7 +4126,25 @@ saving_grace(int dmg)
         return 0;
     }
 
-    if (!u.usaving_grace && dmg >= u.uhp && (u.uhp * 100 / u.uhpmax) > 90) {
+    if (!svc.context.mon_moving) {
+        /* saving grace doesn't protect you from your own actions */
+        return dmg;
+    }
+
+    if (dmg < u.uhp || u.uhp <= 0) {
+        /* no need for saving grace */
+        return dmg;
+    }
+
+    if (gs.saving_grace_turn) {
+        /* saving grace already triggered and prevents HP reducing below 1
+           this turn (specifically: until the next player action or turn
+           boundary), don't print further messages or livelog entries */
+        return u.uhp - 1;
+    }
+
+    if (!u.usaving_grace &&
+        (gu.uhp_at_start_of_monster_turn * 100 / u.uhpmax) >= 90) {
         /* saving_grace doesn't have it's own livelog classification;
            we might invent one, or perhaps use LL_LIFESAVE, but surviving
            certain death (or preserving worn amulet of life saving) via
@@ -4132,11 +4153,14 @@ saving_grace(int dmg)
            from #chronicle during play but show it to livelog observers */
         livelog_printf(LL_CONDUCT | LL_SPOILER, "%s (%d damage, %d/%d HP)",
                        "survived one-shot death via saving-grace",
-                       dmg, u.uhp, u.uhpmax);
+                       /* include damage that happened earlier this turn */
+                       gu.uhp_at_start_of_monster_turn - u.uhp + dmg,
+                       gu.uhp_at_start_of_monster_turn, u.uhpmax);
 
         /* note: this could reduce dmg to 0 if u.uhpmax==1 */
         dmg = u.uhp - 1;
         u.usaving_grace = 1; /* used up */
+        gs.saving_grace_turn = TRUE;
         end_running(TRUE);
         if (u.usleep)
             unmul("Suddenly you wake up!");
@@ -4327,9 +4351,10 @@ dump_weights(void)
 {
     int i, cnt = 0, nmwidth = 49, mcount = NUMMONS, ocount = NUM_OBJECTS;
     char nmbuf[BUFSZ], nmbufbase[BUFSZ];
+    size_t num_entries = (size_t) (mcount + ocount);
 
     weightlist = (struct weight_table_entry *)
-                alloc(sizeof (struct weight_table_entry) * (mcount + ocount));
+                alloc(sizeof (struct weight_table_entry) * num_entries);
     decl_globals_init();
     init_objects();
     for (i = 0; i < mcount; ++i) {
