@@ -4,12 +4,13 @@
 #include <errno.h>
 #include <fcntl.h>
 
-int twitch_in_fd = -1;
-int twitch_out_fd = -1;
-char twitch_buf[1024];
-int twitch_buf_size;
-char infile[SAVESIZE + 3];
-char outfile[SAVESIZE + 4];
+static int twitch_in_fd = -1;
+static int twitch_out_fd = -1;
+static char twitch_buf[1024];
+static int twitch_buf_size;
+static char infile[SAVESIZE + 3];
+static char outfile[SAVESIZE + 4];
+static time_t last_check = 0;
 
 staticfn void process_twitch_cmd(char*);
 staticfn boolean has_out_file(void);
@@ -31,6 +32,13 @@ void check_twitch(void) {
   if (twitch_in_fd < 0) {
     return;
   }
+
+  time_t now = getnow();
+  if (timet_delta(now, last_check) < 2) {
+    return;
+  }
+
+  last_check = now;
 
   int size;
   size = read(twitch_in_fd, &twitch_buf[twitch_buf_size], 1024 - twitch_buf_size);
