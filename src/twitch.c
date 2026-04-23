@@ -34,7 +34,7 @@ void check_twitch(void) {
   }
 
   time_t now = getnow();
-  if (timet_delta(now, last_check) < 2) {
+  if (timet_delta(now, last_check) < 5) {
     return;
   }
 
@@ -94,13 +94,31 @@ staticfn void process_twitch_cmd(char *cmd) {
     identify_pack(1, TRUE);
     successful_effect(id);
   } else if (!strcmp(effect, "teleport")) {
+    /* Temporarily stun the player, if they are not already, to prevent teleport control */
+    boolean removestun = FALSE;
+    if (!Stunned) {
+      removestun = TRUE;
+      make_stunned(1L, FALSE);
+    }
     tele();
+    if (removestun) {
+      make_stunned(0L, FALSE);
+    }
     successful_effect(id);
   } else if (!strcmp(effect, "level_teleport")) {
     if (u.uhave.amulet || In_endgame(&u.uz) || In_sokoban(&u.uz)) {
       failed_effect(id);
     } else {
+      /* Temporarily stun the player, if they are not already, to prevent teleport control */
+      boolean removestun = FALSE;
+      if (!Stunned) {
+        removestun = TRUE;
+        make_stunned(1L, FALSE);
+      }
       level_tele();
+      if (removestun) {
+        make_stunned(0L, FALSE);
+      }
       successful_effect(id);
     }
   } else if (!strcmp(effect, "healing")) {
